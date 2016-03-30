@@ -31,11 +31,13 @@ import javax.lang.model.type.DeclaredType;
 import javax.lang.model.type.TypeKind;
 import javax.lang.model.type.TypeMirror;
 import javax.lang.model.util.Elements;
+import javax.lang.model.util.Types;
 
 import static com.google.auto.common.MoreElements.isAnnotationPresent;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static dagger.internal.codegen.ErrorMessages.BINDING_METHOD_ABSTRACT;
+import static dagger.internal.codegen.ErrorMessages.BINDING_METHOD_MUST_NOT_BIND_FRAMEWORK_TYPES;
 import static dagger.internal.codegen.ErrorMessages.BINDING_METHOD_MUST_RETURN_A_VALUE;
 import static dagger.internal.codegen.ErrorMessages.BINDING_METHOD_NOT_IN_MODULE;
 import static dagger.internal.codegen.ErrorMessages.BINDING_METHOD_NOT_MAP_HAS_MAP_KEY;
@@ -55,8 +57,6 @@ import static javax.lang.model.element.Modifier.PRIVATE;
 import static javax.lang.model.type.TypeKind.ARRAY;
 import static javax.lang.model.type.TypeKind.DECLARED;
 import static javax.lang.model.type.TypeKind.VOID;
-
-import javax.lang.model.util.Types;
 
 /**
  * A {@linkplain ValidationReport validator} for {@link Produces} methods.
@@ -114,6 +114,11 @@ final class ProducesMethodValidator {
     if (returnTypeKind.equals(VOID)) {
       builder.addError(
           formatErrorMessage(BINDING_METHOD_MUST_RETURN_A_VALUE), producesMethodElement);
+    }
+
+    if (FrameworkTypes.isFrameworkType(returnType)) {
+      builder.addError(
+          formatErrorMessage(BINDING_METHOD_MUST_NOT_BIND_FRAMEWORK_TYPES), producesMethodElement);
     }
 
     TypeMirror exceptionType = elements.getTypeElement(Exception.class.getCanonicalName()).asType();
