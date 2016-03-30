@@ -115,6 +115,7 @@ public class BindingGraphValidator {
   private final DependencyRequestFormatter dependencyRequestFormatter;
   private final KeyFormatter keyFormatter;
   private final Key.Factory keyFactory;
+  private final Scope reusableScope;
 
   BindingGraphValidator(
       Elements elements,
@@ -135,6 +136,7 @@ public class BindingGraphValidator {
     this.dependencyRequestFormatter = dependencyRequestFormatter;
     this.keyFormatter = keyFormatter;
     this.keyFactory = keyFactory;
+    this.reusableScope = Scope.reusableScope(elements);
   }
 
   private class Validation {
@@ -799,7 +801,9 @@ public class BindingGraphValidator {
       for (ResolvedBindings bindings : resolvedBindings.values()) {
         for (ContributionBinding contributionBinding : bindings.ownedContributionBindings()) {
           Optional<Scope> bindingScope = contributionBinding.scope();
-          if (bindingScope.isPresent() && !componentScopes.contains(bindingScope.get())) {
+          if (bindingScope.isPresent()
+              && !bindingScope.get().equals(reusableScope)
+              && !componentScopes.contains(bindingScope.get())) {
             // Scoped components cannot reference bindings to @Provides methods or @Inject
             // types decorated by a different scope annotation. Unscoped components cannot
             // reference to scoped @Provides methods or @Inject types decorated by any
