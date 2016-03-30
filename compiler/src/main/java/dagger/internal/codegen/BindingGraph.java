@@ -32,7 +32,6 @@ import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 import com.google.common.collect.TreeTraverser;
 import dagger.Component;
-import dagger.Reusable;
 import dagger.Subcomponent;
 import dagger.internal.codegen.BindingType.HasBindingType;
 import dagger.internal.codegen.ComponentDescriptor.ComponentMethodDescriptor;
@@ -60,7 +59,6 @@ import static com.google.auto.common.MoreElements.getAnnotationMirror;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Predicates.in;
 import static com.google.common.base.Verify.verify;
-import static dagger.internal.codegen.BindingKey.Kind.CONTRIBUTION;
 import static dagger.internal.codegen.ComponentDescriptor.isComponentContributionMethod;
 import static dagger.internal.codegen.ComponentDescriptor.isComponentProductionMethod;
 import static dagger.internal.codegen.ComponentDescriptor.ComponentMethodDescriptor.isOfKind;
@@ -174,7 +172,6 @@ abstract class BindingGraph {
     private final Key.Factory keyFactory;
     private final ProvisionBinding.Factory provisionBindingFactory;
     private final ProductionBinding.Factory productionBindingFactory;
-    private final Scope reusableScope;
 
     Factory(Elements elements,
         InjectBindingRegistry injectBindingRegistry,
@@ -186,7 +183,6 @@ abstract class BindingGraph {
       this.keyFactory = keyFactory;
       this.provisionBindingFactory = provisionBindingFactory;
       this.productionBindingFactory = productionBindingFactory;
-      this.reusableScope = Scope.reusableScope(elements);
     }
 
     BindingGraph create(ComponentDescriptor componentDescriptor) {
@@ -495,18 +491,6 @@ abstract class BindingGraph {
       }
 
       private Optional<Resolver> getOwningResolver(ContributionBinding binding) {
-        if (binding.scope().isPresent() && binding.scope().get().equals(reusableScope)) {
-          for (Resolver requestResolver : getResolverLineage().reverse()) {
-            // If a @Reusable binding was resolved in an ancestor, use that component.
-            if (requestResolver.resolvedBindings.containsKey(
-                BindingKey.create(CONTRIBUTION, binding.key()))) {
-              return Optional.of(requestResolver);
-            }
-          }
-          // If a @Reusable binding was not resolved in any ancestor, resolve it here.
-          return Optional.absent();
-        }
-
         for (Resolver requestResolver : getResolverLineage().reverse()) {
           if (requestResolver.explicitBindingsSet.contains(binding)) {
             return Optional.of(requestResolver);
@@ -516,7 +500,7 @@ abstract class BindingGraph {
         // look for scope separately.  we do this for the case where @Singleton can appear twice
         // in the † compatibility mode
         Optional<Scope> bindingScope = binding.scope();
-        if (bindingScope.isPresent() && !bindingScope.get().equals(reusableScope)) {
+        if (bindingScope.isPresent()) {
           for (Resolver requestResolver : getResolverLineage().reverse()) {
             if (requestResolver.componentDescriptor.scopes().contains(bindingScope.get())) {
               return Optional.of(requestResolver);
@@ -740,12 +724,11 @@ abstract class BindingGraph {
         }
 
         /**
-         * Returns {@code true} if {@code binding} is unscoped (or has {@link Reusable @Reusable}
-         * scope) and depends on multibindings with contributions declared within this component's
-         * modules, or if any of its unscoped or {@link Reusable @Reusable} scoped dependencies
-         * depend on such local multibindings.
+         * Returns {@code true} if {@code binding} is unscoped and depends on multibindings with
+         * contributions declared within this component's modules, or if any of its unscoped
+         * dependencies depend on such local multibindings.
          *
-         * <p>We don't care about non-reusable scoped dependencies because they will never depend on
+         * <p>We don't care about scoped dependencies because they will never depend on
          * multibindings with contributions from subcomponents.
          */
         boolean dependsOnLocalMultibindings(final Binding binding) {
@@ -758,8 +741,7 @@ abstract class BindingGraph {
                 new Callable<Boolean>() {
                   @Override
                   public Boolean call() {
-                    if ((!binding.scope().isPresent()
-                            || binding.scope().get().equals(reusableScope))
+                    if (!binding.scope().isPresent()
                         // TODO(beder): Figure out what happens with production subcomponents.
                         && !binding.bindingType().equals(BindingType.PRODUCTION)) {
                       for (DependencyRequest dependency : binding.implicitDependencies()) {

@@ -105,7 +105,6 @@ import static dagger.internal.codegen.TypeNames.SCOPED_PROVIDER;
 import static dagger.internal.codegen.TypeNames.SET_FACTORY;
 import static dagger.internal.codegen.TypeNames.SET_OF_PRODUCED_PRODUCER;
 import static dagger.internal.codegen.TypeNames.SET_PRODUCER;
-import static dagger.internal.codegen.TypeNames.SIMPLE_LAZILY_INITIALIZED_PROVIDER;
 import static dagger.internal.codegen.TypeNames.STRING;
 import static dagger.internal.codegen.TypeNames.UNSUPPORTED_OPERATION_EXCEPTION;
 import static dagger.internal.codegen.TypeNames.providerOf;
@@ -135,7 +134,6 @@ abstract class AbstractComponentWriter {
   protected final ClassName name;
   protected final BindingGraph graph;
   protected final ImmutableMap<ComponentDescriptor, String> subcomponentNames;
-  private final Scope reusableScope;
   private final Map<BindingKey, InitializationState> initializationStates = new HashMap<>();
   protected TypeSpec.Builder component;
   private final UniqueNameSet componentFieldNames = new UniqueNameSet();
@@ -172,7 +170,6 @@ abstract class AbstractComponentWriter {
     this.name = name;
     this.graph = graph;
     this.subcomponentNames = subcomponentNames;
-    this.reusableScope = Scope.reusableScope(elements);
   }
 
   protected final TypeElement componentDefinitionType() {
@@ -930,7 +927,7 @@ abstract class AbstractComponentWriter {
                   generatedClassNameForBinding(binding),
                   makeParametersCodeBlock(arguments));
           return binding.scope().isPresent()
-              ? decorateForScope(factoryCreate, binding.scope().get())
+              ? CodeBlocks.format("$T.create($L)", SCOPED_PROVIDER, factoryCreate)
               : factoryCreate;
         }
 
@@ -995,13 +992,6 @@ abstract class AbstractComponentWriter {
       default:
         throw new AssertionError(binding.toString());
     }
-  }
-
-  private CodeBlock decorateForScope(CodeBlock factoryCreate, Scope scope) {
-    return CodeBlocks.format(
-        "$T.create($L)",
-        scope.equals(reusableScope) ? SIMPLE_LAZILY_INITIALIZED_PROVIDER : SCOPED_PROVIDER,
-        factoryCreate);
   }
 
   private CodeBlock nullableAnnotation(Optional<DeclaredType> nullableType) {
