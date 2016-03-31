@@ -30,13 +30,11 @@ import javax.lang.model.type.DeclaredType;
 import javax.lang.model.type.TypeKind;
 import javax.lang.model.type.TypeMirror;
 import javax.lang.model.util.Elements;
-import javax.lang.model.util.Types;
 
 import static com.google.auto.common.MoreElements.isAnnotationPresent;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static dagger.internal.codegen.ErrorMessages.BINDING_METHOD_ABSTRACT;
-import static dagger.internal.codegen.ErrorMessages.BINDING_METHOD_MUST_NOT_BIND_FRAMEWORK_TYPES;
 import static dagger.internal.codegen.ErrorMessages.BINDING_METHOD_MUST_RETURN_A_VALUE;
 import static dagger.internal.codegen.ErrorMessages.BINDING_METHOD_NOT_IN_MODULE;
 import static dagger.internal.codegen.ErrorMessages.BINDING_METHOD_NOT_MAP_HAS_MAP_KEY;
@@ -58,6 +56,8 @@ import static javax.lang.model.type.TypeKind.ARRAY;
 import static javax.lang.model.type.TypeKind.DECLARED;
 import static javax.lang.model.type.TypeKind.TYPEVAR;
 import static javax.lang.model.type.TypeKind.VOID;
+
+import javax.lang.model.util.Types;
 
 /**
  * A {@linkplain ValidationReport validator} for {@link Provides} methods.
@@ -82,8 +82,6 @@ final class ProvidesMethodValidator {
     ValidationReport.Builder<ExecutableElement> builder =
         ValidationReport.about(providesMethodElement);
 
-    /* this cast isn't actually guaranteed to be safe, but since we've already run superficial
-     * validation, it shouldn't ever fail */
     Provides providesAnnotation = providesMethodElement.getAnnotation(Provides.class);
     checkArgument(providesAnnotation != null);
 
@@ -139,21 +137,12 @@ final class ProvidesMethodValidator {
     validateMethodQualifiers(builder, providesMethodElement);
 
     switch (providesAnnotation.type()) {
-      case UNIQUE:
-        /* Validate that a unique binding is not attempting to bind a framework type. This
-         * validation is only appropriate for unique bindings because multibindings may collect
-         * framework types.  E.g. Set<Provider<Foo>> is perfectly reasonable. */
-        if (FrameworkTypes.isFrameworkType(returnType)) {
-          builder.addError(
-              formatErrorMessage(BINDING_METHOD_MUST_NOT_BIND_FRAMEWORK_TYPES),
-              providesMethodElement);
-        }
-        // fall through
+      case UNIQUE: // fall through
       case SET:
-        validateReturnType(builder, returnType);
+        validateKeyType(builder, returnType);
         break;
       case MAP:
-        validateReturnType(builder, returnType);
+        validateKeyType(builder, returnType);
         ImmutableSet<? extends AnnotationMirror> mapKeys = getMapKeys(providesMethodElement);
         switch (mapKeys.size()) {
           case 0:
@@ -180,7 +169,7 @@ final class ProvidesMethodValidator {
             builder.addError(
                 formatErrorMessage(BINDING_METHOD_SET_VALUES_RAW_SET), providesMethodElement);
           } else {
-            validateReturnType(builder,
+            validateKeyType(builder,
                 Iterables.getOnlyElement(declaredReturnType.getTypeArguments()));
           }
         }
@@ -211,10 +200,9 @@ final class ProvidesMethodValidator {
     return String.format(msg, Provides.class.getSimpleName(), Module.class.getSimpleName());
   }
 
-  /** Validates that the return type of a provides method is an acceptable kind. */
-  private void validateReturnType(ValidationReport.Builder<? extends Element> reportBuilder,
-      TypeMirror returnType) {
-    TypeKind kind = returnType.getKind();
+  private void validateKeyType(ValidationReport.Builder<? extends Element> reportBuilder,
+      TypeMirror type) {
+    TypeKind kind = type.getKind();
     if (!(kind.isPrimitive()
         || kind.equals(DECLARED)
         || kind.equals(ARRAY)
