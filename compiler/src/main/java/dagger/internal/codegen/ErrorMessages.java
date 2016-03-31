@@ -80,14 +80,14 @@ final class ErrorMessages {
   /* fields */
   static final String PRIVATE_INJECT_FIELD =
       "Dagger does not support injection into private fields";
-  
+
   static final String STATIC_INJECT_FIELD =
       "Dagger does not support injection into static fields";
 
   /* methods */
   static final String PRIVATE_INJECT_METHOD =
       "Dagger does not support injection into private methods";
-  
+
   static final String STATIC_INJECT_METHOD =
       "Dagger does not support injection into static methods";
 
@@ -151,6 +151,9 @@ final class ErrorMessages {
   static final String BINDING_METHOD_MUST_RETURN_A_VALUE =
       "@%s methods must return a value (not void).";
 
+  static final String BINDING_METHOD_MUST_NOT_BIND_FRAMEWORK_TYPES =
+      "@%s methods must not return framework types.";
+
   static final String BINDING_METHOD_ABSTRACT = "@%s methods cannot be abstract";
 
   static final String BINDING_METHOD_PRIVATE = "@%s methods cannot be private";
@@ -213,7 +216,7 @@ final class ErrorMessages {
 
   static final String PROVIDER_MAY_NOT_DEPEND_ON_PRODUCER_FORMAT =
       "%s is a provision, which cannot depend on a production.";
-  
+
   static final String DEPENDS_ON_PRODUCTION_EXECUTOR_FORMAT =
       "%s may not depend on the production executor.";
 
