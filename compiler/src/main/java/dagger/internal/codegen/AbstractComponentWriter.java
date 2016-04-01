@@ -686,6 +686,7 @@ abstract class AbstractComponentWriter {
             case PRODUCED:
             case PRODUCER:
             case PROVIDER:
+            case PROVIDER_OF_LAZY:
             case FUTURE:
               interfaceMethod.addStatement(
                   "return $L",
