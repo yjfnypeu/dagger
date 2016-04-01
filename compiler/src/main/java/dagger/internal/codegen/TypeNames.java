@@ -30,7 +30,6 @@ import dagger.internal.InstanceFactory;
 import dagger.internal.MapFactory;
 import dagger.internal.MapProviderFactory;
 import dagger.internal.MembersInjectors;
-import dagger.internal.ProviderOfLazy;
 import dagger.internal.SetFactory;
 import dagger.internal.SimpleLazilyInitializedProvider;
 import dagger.producers.Produced;
@@ -78,7 +77,6 @@ final class TypeNames {
   static final ClassName PRODUCER = ClassName.get(Producer.class);
   static final ClassName PRODUCERS = ClassName.get(Producers.class);
   static final ClassName PROVIDER = ClassName.get(Provider.class);
-  static final ClassName PROVIDER_OF_LAZY = ClassName.get(ProviderOfLazy.class);
   static final ClassName SIMPLE_LAZILY_INITIALIZED_PROVIDER =
       ClassName.get(SimpleLazilyInitializedProvider.class);
   static final ClassName SET = ClassName.get(Set.class);
