@@ -38,6 +38,7 @@ import static com.google.common.base.CaseFormat.UPPER_CAMEL;
 import static com.google.common.base.Preconditions.checkArgument;
 import static dagger.internal.codegen.FrameworkDependency.frameworkDependenciesForBinding;
 import static dagger.internal.codegen.TypeNames.DOUBLE_CHECK;
+import static dagger.internal.codegen.TypeNames.PROVIDER_OF_LAZY;
 
 /**
  * Utilities for generating files.
@@ -133,6 +134,8 @@ class SourceFiles {
       case PRODUCER:
       case MEMBERS_INJECTOR:
         return CodeBlocks.format("$L", frameworkTypeMemberSelect);
+      case PROVIDER_OF_LAZY:
+        return CodeBlocks.format("$T.create($L)", PROVIDER_OF_LAZY, frameworkTypeMemberSelect);
       default:
         throw new AssertionError();
     }
