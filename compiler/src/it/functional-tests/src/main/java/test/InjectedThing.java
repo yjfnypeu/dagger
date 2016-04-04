@@ -88,7 +88,6 @@ final class InjectedThing {
   @Inject Thing thing;
   @Inject Provider<Thing> thingProvider;
   @Inject Lazy<Thing> lazyThing;
-  @Inject Provider<Lazy<Thing>> lazyThingProvider;
   @Inject MembersInjector<Thing> thingMembersInjector;
 
   @Inject InjectedThing(
