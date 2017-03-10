@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 Google, Inc.
+ * Copyright (C) 2015 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package test.staticprovides;
 
 import static java.util.Collections.emptySet;
@@ -21,7 +22,6 @@ import dagger.Module;
 import dagger.Provides;
 import dagger.multibindings.ElementsIntoSet;
 import dagger.multibindings.IntoSet;
-
 import java.util.Set;
 
 @Module

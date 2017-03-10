@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 Google, Inc.
+ * Copyright (C) 2015 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.internal.codegen;
+
+import static com.google.common.base.Preconditions.checkArgument;
 
 import com.google.auto.common.MoreTypes;
 import com.google.auto.value.AutoValue;
@@ -21,9 +24,6 @@ import com.google.common.base.Equivalence;
 import java.util.Set;
 import javax.lang.model.type.DeclaredType;
 import javax.lang.model.type.TypeMirror;
-
-import static com.google.common.base.Preconditions.checkArgument;
-import static com.google.common.base.Preconditions.checkState;
 
 /**
  * Information about a {@link Set} {@link TypeMirror}.
@@ -76,7 +76,11 @@ abstract class SetType {
         wrappingClass.getTypeParameters().length == 1,
         "%s must have exactly one type parameter",
         wrappingClass);
-    checkState(elementsAreTypeOf(wrappingClass));
+    checkArgument(
+        elementsAreTypeOf(wrappingClass),
+        "expected elements to be %s, but this type is %s",
+        wrappingClass,
+        declaredSetType());
     return MoreTypes.asDeclared(elementType()).getTypeArguments().get(0);
   }
 

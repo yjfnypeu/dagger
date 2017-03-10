@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Google, Inc.
+ * Copyright (C) 2016 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,12 +13,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package producerstest.multibindings;
 
 import com.google.common.collect.ImmutableSet;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
-
 import dagger.multibindings.ElementsIntoSet;
 import dagger.multibindings.IntKey;
 import dagger.multibindings.IntoMap;
@@ -27,13 +27,12 @@ import dagger.multibindings.Multibinds;
 import dagger.producers.Produced;
 import dagger.producers.ProducerModule;
 import dagger.producers.Produces;
-
+import java.util.Map;
+import java.util.Set;
+import producerstest.multibindings.Qualifiers.EmptyButDeclaredInModuleAndProducerModule;
 import producerstest.multibindings.Qualifiers.ObjCount;
 import producerstest.multibindings.Qualifiers.PossiblyThrowingMap;
 import producerstest.multibindings.Qualifiers.PossiblyThrowingSet;
-
-import java.util.Map;
-import java.util.Set;
 
 @ProducerModule
 abstract class MultibindingProducerModule {
@@ -53,6 +52,12 @@ abstract class MultibindingProducerModule {
   @ElementsIntoSet
   static ListenableFuture<Set<String>> futureStrs() {
     return Futures.<Set<String>>immediateFuture(ImmutableSet.of("foo1", "foo2"));
+  }
+
+  @Produces
+  @ElementsIntoSet
+  static Set<ListenableFuture<String>> strFutures() {
+    return ImmutableSet.of(Futures.immediateFuture("baz1"), Futures.immediateFuture("baz2"));
   }
 
   @Produces
@@ -128,4 +133,8 @@ abstract class MultibindingProducerModule {
   static int objCount(Set<Produced<Object>> objs, Map<Object, Produced<Object>> objMap) {
     return objs.size() + objMap.size();
   }
+  
+  @Multibinds
+  @EmptyButDeclaredInModuleAndProducerModule
+  abstract Map<String, Object> emptyButDeclaredInModuleAndProducerModule();
 }

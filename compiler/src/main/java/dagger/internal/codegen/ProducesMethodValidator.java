@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Google, Inc.
+ * Copyright (C) 2014 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,23 +13,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package dagger.internal.codegen;
 
-import com.google.auto.common.MoreTypes;
-import com.google.common.base.Optional;
-import com.google.common.util.concurrent.ListenableFuture;
-import dagger.multibindings.ElementsIntoSet;
-import dagger.producers.ProducerModule;
-import dagger.producers.Produces;
-import java.util.Set;
-import javax.lang.model.element.ExecutableElement;
-import javax.lang.model.type.DeclaredType;
-import javax.lang.model.type.TypeMirror;
-import javax.lang.model.util.Elements;
-import javax.lang.model.util.Types;
+package dagger.internal.codegen;
 
 import static com.google.common.collect.Iterables.getOnlyElement;
 import static dagger.internal.codegen.BindingMethodValidator.Abstractness.MUST_BE_CONCRETE;
+import static dagger.internal.codegen.BindingMethodValidator.AllowsMultibindings.ALLOWS_MULTIBINDINGS;
 import static dagger.internal.codegen.BindingMethodValidator.ExceptionSuperclass.EXCEPTION;
 import static dagger.internal.codegen.ErrorMessages.PRODUCES_METHOD_NULLABLE;
 import static dagger.internal.codegen.ErrorMessages.PRODUCES_METHOD_RAW_FUTURE;
@@ -37,18 +26,36 @@ import static dagger.internal.codegen.ErrorMessages.PRODUCES_METHOD_RETURN_TYPE;
 import static dagger.internal.codegen.ErrorMessages.PRODUCES_METHOD_SCOPE;
 import static dagger.internal.codegen.ErrorMessages.PRODUCES_METHOD_SET_VALUES_RETURN_SET;
 
+import com.google.auto.common.MoreTypes;
+import com.google.common.util.concurrent.ListenableFuture;
+import dagger.multibindings.ElementsIntoSet;
+import dagger.producers.ProducerModule;
+import dagger.producers.Produces;
+import java.util.Optional;
+import java.util.Set;
+import javax.lang.model.element.ExecutableElement;
+import javax.lang.model.type.DeclaredType;
+import javax.lang.model.type.TypeMirror;
+import javax.lang.model.util.Elements;
+import javax.lang.model.util.Types;
+
 /**
  * A validator for {@link Produces} methods.
  *
  * @author Jesse Beder
  * @since 2.0
  */
-// TODO(beder): Consider unifying this with the ProvidesMethodValidator after Provides.Type and
-// Produces.Type are reconciled.
 final class ProducesMethodValidator extends BindingMethodValidator {
 
   ProducesMethodValidator(Elements elements, Types types) {
-    super(elements, types, Produces.class, ProducerModule.class, MUST_BE_CONCRETE, EXCEPTION);
+    super(
+        elements,
+        types,
+        Produces.class,
+        ProducerModule.class,
+        MUST_BE_CONCRETE,
+        EXCEPTION,
+        ALLOWS_MULTIBINDINGS);
   }
   
   @Override
@@ -112,13 +119,13 @@ final class ProducesMethodValidator extends BindingMethodValidator {
     return PRODUCES_METHOD_SET_VALUES_RETURN_SET;
   }
 
-  private Optional<TypeMirror> unwrapListenableFuture(
+  private static Optional<TypeMirror> unwrapListenableFuture(
       ValidationReport.Builder<ExecutableElement> reportBuilder, TypeMirror type) {
     if (MoreTypes.isType(type) && MoreTypes.isTypeOf(ListenableFuture.class, type)) {
       DeclaredType declaredType = MoreTypes.asDeclared(type);
       if (declaredType.getTypeArguments().isEmpty()) {
         reportBuilder.addError(PRODUCES_METHOD_RAW_FUTURE);
-        return Optional.absent();
+        return Optional.empty();
       } else {
         return Optional.of((TypeMirror) getOnlyElement(declaredType.getTypeArguments()));
       }

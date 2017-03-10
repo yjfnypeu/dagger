@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 Google, Inc.
+ * Copyright (C) 2015 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,8 +13,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package test.cycle;
 
+import dagger.Binds;
 import dagger.Component;
 import dagger.Lazy;
 import dagger.Module;
@@ -28,13 +30,15 @@ import javax.inject.Provider;
 
 /**
  * Cycle classes used for testing cyclic dependencies.
- * A <- (E <- D <- B <- C <- Provider<A>, Lazy<A>), (B <- C <- Provider<A>, Lazy<A>)
- * S <- Provider<S>, Lazy<S>
+ *
+ * <pre>
+ * {@literal A ← (E ← D ← B ← C ← Provider<A>, Lazy<A>), (B ← C ← Provider<A>, Lazy<A>)}
+ * {@literal S ← Provider<S>, Lazy<S>}
+ * </pre>
  *
  * @author Tony Bentancur
  * @since 2.0
  */
-
 final class Cycles {
   private Cycles() {}
 
@@ -61,6 +65,7 @@ final class Cycles {
   static class C {
     public final Provider<A> aProvider;
     @Inject public Lazy<A> aLazy;
+    @Inject public Provider<Lazy<A>> aLazyProvider;
 
     @Inject
     C(Provider<A> aProvider) {
@@ -117,20 +122,16 @@ final class Cycles {
   }
 
   @Module
-  static class CycleMapModule {
-    @Provides
+  abstract static class CycleMapModule {
+    @Binds
     @IntoMap
     @StringKey("X")
-    static X x(X x) {
-      return x;
-    }
+    abstract X x(X x);
 
-    @Provides
+    @Binds
     @IntoMap
     @StringKey("Y")
-    static Y y(Y y) {
-      return y;
-    }
+    abstract Y y(Y y);
   }
 
   @SuppressWarnings("dependency-cycle")

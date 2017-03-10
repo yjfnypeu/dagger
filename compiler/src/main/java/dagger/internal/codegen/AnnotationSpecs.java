@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Google, Inc.
+ * Copyright (C) 2016 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,17 +13,35 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.internal.codegen;
 
+import static com.google.common.base.Preconditions.checkNotNull;
+
+import com.google.common.base.Ascii;
+import com.google.common.base.Preconditions;
+import com.google.common.collect.Lists;
 import com.squareup.javapoet.AnnotationSpec;
+import java.util.Arrays;
 
 final class AnnotationSpecs {
+  enum Suppression {
+    RAWTYPES,
+    UNCHECKED,
+    ;
 
-  static final AnnotationSpec SUPPRESS_WARNINGS_UNCHECKED = suppressWarnings("unchecked");
-  static final AnnotationSpec SUPPRESS_WARNINGS_RAWTYPES = suppressWarnings("rawtypes");
+    @Override
+    public String toString() {
+      return Ascii.toLowerCase(name());
+    }
+  }
 
-  private static AnnotationSpec suppressWarnings(String value) {
-    return AnnotationSpec.builder(SuppressWarnings.class).addMember("value", "$S", value).build();
+  static AnnotationSpec suppressWarnings(Suppression first, Suppression... rest) {
+    checkNotNull(first);
+    Arrays.stream(rest).forEach(Preconditions::checkNotNull);
+    AnnotationSpec.Builder builder = AnnotationSpec.builder(SuppressWarnings.class);
+    Lists.asList(first, rest).forEach(suppression -> builder.addMember("value", "$S", suppression));
+    return builder.build();
   }
 
   private AnnotationSpecs() {}

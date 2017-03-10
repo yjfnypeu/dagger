@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Google, Inc.
+ * Copyright (C) 2014 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.internal.codegen;
+
+import static com.google.common.truth.Truth.assertAbout;
+import static com.google.testing.compile.JavaSourceSubjectFactory.javaSource;
+import static com.google.testing.compile.JavaSourcesSubjectFactory.javaSources;
+import static dagger.internal.codegen.GeneratedLines.GENERATED_ANNOTATION;
 
 import com.google.common.collect.ImmutableList;
 import com.google.testing.compile.JavaFileObjects;
@@ -21,11 +27,6 @@ import javax.tools.JavaFileObject;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
-
-import static com.google.common.truth.Truth.assertAbout;
-import static com.google.testing.compile.JavaSourceSubjectFactory.javaSource;
-import static com.google.testing.compile.JavaSourcesSubjectFactory.javaSources;
-import static dagger.internal.codegen.GeneratedLines.GENERATED_ANNOTATION;
 
 @RunWith(JUnit4.class)
 public class ProductionComponentProcessorTest {
@@ -235,7 +236,7 @@ public class ProductionComponentProcessorTest {
             "  }",
             "",
             "  public static TestClass.SimpleComponent create() {",
-            "    return builder().build()",
+            "    return new Builder().build()",
             "  }",
             "",
             "  @SuppressWarnings(\"unchecked\")",
@@ -292,14 +293,6 @@ public class ProductionComponentProcessorTest {
             "",
             "    public Builder bModule(TestClass.BModule bModule) {",
             "      this.bModule = Preconditions.checkNotNull(bModule);",
-            "      return this;",
-            "    }",
-            "",
-            "    @Deprecated",
-            "    public Builder testClass_SimpleComponent_MonitoringModule(",
-            "        TestClass_SimpleComponent_MonitoringModule",
-            "        testClass_SimpleComponent_MonitoringModule) {",
-            "      Preconditions.checkNotNull(testClass_SimpleComponent_MonitoringModule);",
             "      return this;",
             "    }",
             "",

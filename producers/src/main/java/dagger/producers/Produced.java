@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Google Inc.
+ * Copyright (C) 2014 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,15 +13,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.producers;
+
+import static com.google.common.base.Preconditions.checkNotNull;
 
 import com.google.common.base.Objects;
 import dagger.internal.Beta;
 import java.util.concurrent.ExecutionException;
 import javax.annotation.CheckReturnValue;
 import javax.annotation.Nullable;
-
-import static com.google.common.base.Preconditions.checkNotNull;
 
 /**
  * An interface that represents the result of a {@linkplain Producer production} of type {@code T},

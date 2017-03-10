@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Google, Inc.
+ * Copyright (C) 2014 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,27 +13,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package dagger.internal.codegen;
 
-import com.google.auto.common.MoreElements;
-import com.google.auto.common.MoreTypes;
-import com.google.common.base.Optional;
-import com.google.common.base.Predicate;
-import com.google.common.collect.FluentIterable;
-import com.google.common.collect.ImmutableSet;
-import java.util.Set;
-import javax.inject.Inject;
-import javax.lang.model.element.AnnotationMirror;
-import javax.lang.model.element.ExecutableElement;
-import javax.lang.model.element.Modifier;
-import javax.lang.model.element.TypeElement;
-import javax.lang.model.element.VariableElement;
-import javax.lang.model.type.TypeKind;
-import javax.lang.model.type.TypeMirror;
-import javax.lang.model.util.ElementFilter;
-import javax.lang.model.util.Elements;
-import javax.lang.model.util.Types;
-import javax.tools.Diagnostic;
+package dagger.internal.codegen;
 
 import static com.google.auto.common.MoreElements.isAnnotationPresent;
 import static dagger.internal.codegen.Accessibility.isElementAccessibleFromOwnPackage;
@@ -50,18 +31,37 @@ import static dagger.internal.codegen.ErrorMessages.MULTIPLE_QUALIFIERS;
 import static dagger.internal.codegen.ErrorMessages.MULTIPLE_SCOPES;
 import static dagger.internal.codegen.ErrorMessages.PRIVATE_INJECT_FIELD;
 import static dagger.internal.codegen.ErrorMessages.PRIVATE_INJECT_METHOD;
-import static dagger.internal.codegen.ErrorMessages.provisionMayNotDependOnProducerType;
 import static dagger.internal.codegen.ErrorMessages.QUALIFIER_ON_INJECT_CONSTRUCTOR;
 import static dagger.internal.codegen.ErrorMessages.SCOPE_ON_INJECT_CONSTRUCTOR;
 import static dagger.internal.codegen.ErrorMessages.STATIC_INJECT_FIELD;
 import static dagger.internal.codegen.ErrorMessages.STATIC_INJECT_METHOD;
+import static dagger.internal.codegen.ErrorMessages.provisionMayNotDependOnProducerType;
 import static dagger.internal.codegen.InjectionAnnotations.getQualifiers;
 import static dagger.internal.codegen.InjectionAnnotations.getScopes;
+import static dagger.internal.codegen.InjectionAnnotations.injectedConstructors;
 import static javax.lang.model.element.Modifier.ABSTRACT;
 import static javax.lang.model.element.Modifier.FINAL;
 import static javax.lang.model.element.Modifier.PRIVATE;
 import static javax.lang.model.element.Modifier.STATIC;
 import static javax.lang.model.type.TypeKind.DECLARED;
+
+import com.google.auto.common.MoreElements;
+import com.google.auto.common.MoreTypes;
+import com.google.common.collect.ImmutableSet;
+import java.util.Optional;
+import java.util.Set;
+import javax.inject.Inject;
+import javax.lang.model.element.AnnotationMirror;
+import javax.lang.model.element.ExecutableElement;
+import javax.lang.model.element.Modifier;
+import javax.lang.model.element.TypeElement;
+import javax.lang.model.element.VariableElement;
+import javax.lang.model.type.TypeKind;
+import javax.lang.model.type.TypeMirror;
+import javax.lang.model.util.ElementFilter;
+import javax.lang.model.util.Elements;
+import javax.lang.model.util.Types;
+import javax.tools.Diagnostic;
 
 /**
  * A {@linkplain ValidationReport validator} for {@link Inject}-annotated elements and the types
@@ -77,7 +77,7 @@ final class InjectValidator {
   private final Optional<Diagnostic.Kind> privateAndStaticInjectionDiagnosticKind;
 
   InjectValidator(Types types, Elements elements, CompilerOptions compilerOptions) {
-    this(types, elements, compilerOptions, Optional.<Diagnostic.Kind>absent());
+    this(types, elements, compilerOptions, Optional.empty());
   }
 
   private InjectValidator(
@@ -131,7 +131,8 @@ final class InjectValidator {
     if (throwsCheckedExceptions(constructorElement)) {
       builder.addItem(
           CHECKED_EXCEPTIONS_ON_CONSTRUCTORS,
-          privateAndStaticInjectionDiagnosticKind.or(compilerOptions.privateMemberValidationKind()),
+          privateAndStaticInjectionDiagnosticKind.orElse(
+              compilerOptions.privateMemberValidationKind()),
           constructorElement);
     }
 
@@ -142,7 +143,8 @@ final class InjectValidator {
     if (!Accessibility.isElementAccessibleFromOwnPackage(enclosingElement)) {
       builder.addItem(
           INJECT_INTO_PRIVATE_CLASS,
-          privateAndStaticInjectionDiagnosticKind.or(compilerOptions.privateMemberValidationKind()),
+          privateAndStaticInjectionDiagnosticKind.orElse(
+              compilerOptions.privateMemberValidationKind()),
           constructorElement);
     }
 
@@ -156,13 +158,7 @@ final class InjectValidator {
     }
 
     // This is computationally expensive, but probably preferable to a giant index
-    FluentIterable<ExecutableElement> injectConstructors = FluentIterable.from(
-        ElementFilter.constructorsIn(enclosingElement.getEnclosedElements()))
-            .filter(new Predicate<ExecutableElement>() {
-              @Override public boolean apply(ExecutableElement input) {
-                return isAnnotationPresent(input, Inject.class);
-              }
-            });
+    ImmutableSet<ExecutableElement> injectConstructors = injectedConstructors(enclosingElement);
 
     if (injectConstructors.size() > 1) {
       builder.addError(MULTIPLE_INJECT_CONSTRUCTORS, constructorElement);
@@ -188,14 +184,16 @@ final class InjectValidator {
     if (modifiers.contains(PRIVATE)) {
       builder.addItem(
           PRIVATE_INJECT_FIELD,
-          privateAndStaticInjectionDiagnosticKind.or(compilerOptions.privateMemberValidationKind()),
+          privateAndStaticInjectionDiagnosticKind.orElse(
+              compilerOptions.privateMemberValidationKind()),
           fieldElement);
     }
 
     if (modifiers.contains(STATIC)) {
       builder.addItem(
           STATIC_INJECT_FIELD,
-          privateAndStaticInjectionDiagnosticKind.or(compilerOptions.staticMemberValidationKind()),
+          privateAndStaticInjectionDiagnosticKind.orElse(
+              compilerOptions.staticMemberValidationKind()),
           fieldElement);
     }
 
@@ -223,14 +221,16 @@ final class InjectValidator {
     if (modifiers.contains(PRIVATE)) {
       builder.addItem(
           PRIVATE_INJECT_METHOD,
-          privateAndStaticInjectionDiagnosticKind.or(compilerOptions.privateMemberValidationKind()),
+          privateAndStaticInjectionDiagnosticKind.orElse(
+              compilerOptions.privateMemberValidationKind()),
           methodElement);
     }
 
     if (modifiers.contains(STATIC)) {
       builder.addItem(
           STATIC_INJECT_METHOD,
-          privateAndStaticInjectionDiagnosticKind.or(compilerOptions.staticMemberValidationKind()),
+          privateAndStaticInjectionDiagnosticKind.orElse(
+              compilerOptions.staticMemberValidationKind()),
           methodElement);
     }
 
@@ -276,12 +276,13 @@ final class InjectValidator {
         }
       }
     }
-    // We can't use MembersInjectionBinding.Factory#hasInjectedMembers because that assumes this
+    // We can't use MembersInjectionBinding.Factory#hasInjectedMembersIn because that assumes this
     // binding already validates, so we just check it again here.
     if (hasInjectedMembers && !isElementAccessibleFromOwnPackage(typeElement)) {
       builder.addItem(
           INJECT_INTO_PRIVATE_CLASS,
-          privateAndStaticInjectionDiagnosticKind.or(compilerOptions.privateMemberValidationKind()),
+          privateAndStaticInjectionDiagnosticKind.orElse(
+              compilerOptions.privateMemberValidationKind()),
           typeElement);
     }
     TypeMirror superclass = typeElement.getSuperclass();

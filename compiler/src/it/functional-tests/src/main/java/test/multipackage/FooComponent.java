@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 Google, Inc.
+ * Copyright (C) 2015 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@ import dagger.Component;
 import java.util.Set;
 import test.multipackage.a.AModule;
 import test.multipackage.a.UsesInaccessible;
+import test.multipackage.a.UsesInaccessibleInGenericsOnly;
 import test.multipackage.sub.FooChildComponent;
 
 /**
@@ -42,4 +43,6 @@ interface FooComponent {
   FooChildComponent fooChildComponent();
 
   UsesInaccessible usesInaccessible();
+
+  UsesInaccessibleInGenericsOnly accessibleConstructorUsesInaccessibleInGenericsOnly();
 }

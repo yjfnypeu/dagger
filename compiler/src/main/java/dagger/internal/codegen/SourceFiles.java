@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Google, Inc.
+ * Copyright (C) 2014 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
  * in compliance with the License. You may obtain a copy of the License at
@@ -11,33 +11,38 @@
  * or implied. See the License for the specific language governing permissions and limitations under
  * the License.
  */
+
 package dagger.internal.codegen;
+
+import static com.google.common.base.CaseFormat.LOWER_CAMEL;
+import static com.google.common.base.CaseFormat.UPPER_CAMEL;
+import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.base.Verify.verify;
+import static dagger.internal.codegen.ContributionBinding.Kind.INJECTION;
+import static dagger.internal.codegen.Optionals.optionalComparator;
+import static dagger.internal.codegen.TypeNames.DOUBLE_CHECK;
+import static dagger.internal.codegen.TypeNames.PROVIDER_OF_LAZY;
+import static java.util.Comparator.comparing;
+import static javax.lang.model.SourceVersion.isName;
 
 import com.google.common.base.CaseFormat;
 import com.google.common.base.Joiner;
-import com.google.common.base.Optional;
-import com.google.common.collect.ComparisonChain;
 import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
-import com.google.common.collect.Ordering;
 import com.squareup.javapoet.ClassName;
 import com.squareup.javapoet.CodeBlock;
 import com.squareup.javapoet.ParameterizedTypeName;
 import com.squareup.javapoet.TypeName;
 import com.squareup.javapoet.TypeVariableName;
+import java.util.Comparator;
 import java.util.Iterator;
+import javax.lang.model.SourceVersion;
+import javax.lang.model.element.Element;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.element.TypeParameterElement;
-import javax.lang.model.type.TypeMirror;
-
-import static com.google.common.base.CaseFormat.UPPER_CAMEL;
-import static com.google.common.base.Preconditions.checkArgument;
-import static dagger.internal.codegen.FrameworkDependency.frameworkDependenciesForBinding;
-import static dagger.internal.codegen.TypeNames.DOUBLE_CHECK;
-import static dagger.internal.codegen.TypeNames.PROVIDER_OF_LAZY;
 
 /**
  * Utilities for generating files.
@@ -53,19 +58,18 @@ class SourceFiles {
    * Sorts {@link DependencyRequest} instances in an order likely to reflect their logical
    * importance.
    */
-  static final Ordering<DependencyRequest> DEPENDENCY_ORDERING = new Ordering<DependencyRequest>() {
-    @Override
-    public int compare(DependencyRequest left, DependencyRequest right) {
-      return ComparisonChain.start()
+  static final Comparator<DependencyRequest> DEPENDENCY_ORDERING =
       // put fields before parameters
-          .compare(left.requestElement().getKind(), right.requestElement().getKind())
+      comparing(
+              (DependencyRequest request) -> request.requestElement().map(Element::getKind),
+              optionalComparator())
           // order by dependency kind
-          .compare(left.kind(), right.kind())
+          .thenComparing(DependencyRequest::kind)
           // then sort by name
-          .compare(left.requestElement().getSimpleName().toString(),
-              right.requestElement().getSimpleName().toString()).result();
-    }
-  };
+          .thenComparing(
+              request ->
+                  request.requestElement().map(element -> element.getSimpleName().toString()),
+              optionalComparator());
 
   /**
    * Generates names and keys for the factory class fields needed to hold the framework classes for
@@ -76,7 +80,7 @@ class SourceFiles {
    * <li>is <i>probably</i> associated with the type being bound
    * <li>is unique within the class
    * </ul>
-   * 
+   *
    * @param binding must be an unresolved binding (type parameters must match its type element's)
    */
   static ImmutableMap<BindingKey, FrameworkField> generateBindingFieldsForDependencies(
@@ -84,23 +88,22 @@ class SourceFiles {
     checkArgument(!binding.unresolved().isPresent(), "binding must be unresolved: %s", binding);
 
     ImmutableMap.Builder<BindingKey, FrameworkField> bindingFields = ImmutableMap.builder();
-    for (FrameworkDependency frameworkDependency : frameworkDependenciesForBinding(binding)) {
+    for (Binding.DependencyAssociation dependencyAssociation : binding.dependencyAssociations()) {
+      FrameworkDependency frameworkDependency = dependencyAssociation.frameworkDependency();
       bindingFields.put(
           frameworkDependency.bindingKey(),
           FrameworkField.create(
               ClassName.get(frameworkDependency.frameworkClass()),
               TypeName.get(frameworkDependency.bindingKey().key().type()),
-              fieldNameForDependency(frameworkDependency)));
+              fieldNameForDependency(dependencyAssociation.dependencyRequests())));
     }
     return bindingFields.build();
   }
 
-  private static String fieldNameForDependency(FrameworkDependency frameworkDependency) {
+  private static String fieldNameForDependency(ImmutableSet<DependencyRequest> dependencyRequests) {
     // collect together all of the names that we would want to call the provider
     ImmutableSet<String> dependencyNames =
-        FluentIterable.from(frameworkDependency.dependencyRequests())
-            .transform(new DependencyVariableNamer())
-            .toSet();
+        FluentIterable.from(dependencyRequests).transform(new DependencyVariableNamer()).toSet();
 
     if (dependencyNames.size() == 1) {
       // if there's only one name, great! use it!
@@ -131,11 +134,11 @@ class SourceFiles {
       case PROVIDER:
       case PRODUCER:
       case MEMBERS_INJECTOR:
-        return CodeBlock.of("$L", frameworkTypeMemberSelect);
+        return frameworkTypeMemberSelect;
       case PROVIDER_OF_LAZY:
         return CodeBlock.of("$T.create($L)", PROVIDER_OF_LAZY, frameworkTypeMemberSelect);
-      default:
-        throw new AssertionError();
+      default: // including PRODUCED
+        throw new AssertionError(dependencyKind);
     }
   }
 
@@ -147,13 +150,12 @@ class SourceFiles {
       case PROVISION:
       case PRODUCTION:
         ContributionBinding contribution = (ContributionBinding) binding;
-        checkArgument(!contribution.isSyntheticBinding());
-        ClassName enclosingClassName = ClassName.get(contribution.bindingTypeElement());
+        checkArgument(contribution.bindingTypeElement().isPresent());
+        ClassName enclosingClassName = ClassName.get(contribution.bindingTypeElement().get());
         switch (contribution.bindingKind()) {
           case INJECTION:
           case PROVISION:
-          case IMMEDIATE:
-          case FUTURE_PRODUCTION:
+          case PRODUCTION:
             return enclosingClassName
                 .topLevelClassName()
                 .peerClass(
@@ -175,63 +177,12 @@ class SourceFiles {
     }
   }
 
-  static TypeName parameterizedGeneratedTypeNameForBinding(
-      Binding binding) {
+  static TypeName parameterizedGeneratedTypeNameForBinding(Binding binding) {
     ClassName className = generatedClassNameForBinding(binding);
-    ImmutableList<TypeName> typeParameters = bindingTypeParameters(binding);
-    if (typeParameters.isEmpty()) {
-      return className;
-    } else {
-      return ParameterizedTypeName.get(
-          className,
-          FluentIterable.from(typeParameters).toArray(TypeName.class));
-    }
-  }
-
-  private static Optional<TypeMirror> typeMirrorForBindingTypeParameters(Binding binding)
-      throws AssertionError {
-    switch (binding.bindingType()) {
-      case PROVISION:
-      case PRODUCTION:
-        ContributionBinding contributionBinding = (ContributionBinding) binding;
-        switch (contributionBinding.bindingKind()) {
-          case INJECTION:
-            return Optional.of(contributionBinding.key().type());
-
-          case PROVISION:
-            // For provision bindings, we parameterize creation on the types of
-            // the module, not the types of the binding.
-            // Consider: Module<A, B, C> { @Provides List<B> provideB(B b) { .. }}
-            // The binding is just parameterized on <B>, but we need all of <A, B, C>.
-            return Optional.of(contributionBinding.bindingTypeElement().asType());
-
-          case IMMEDIATE:
-          case FUTURE_PRODUCTION:
-            // TODO(beder): Can these be treated just like PROVISION?
-            throw new UnsupportedOperationException();
-            
-          default:
-            return Optional.absent();
-        }
-
-      case MEMBERS_INJECTION:
-        return Optional.of(binding.key().type());
-
-      default:
-        throw new AssertionError();
-    }
-  }
-
-  static ImmutableList<TypeName> bindingTypeParameters(
-      Binding binding) {
-    Optional<TypeMirror> typeMirror = typeMirrorForBindingTypeParameters(binding);
-    if (!typeMirror.isPresent()) {
-      return ImmutableList.of();
-    }
-    TypeName bindingTypeName = TypeName.get(typeMirror.get());
-    return bindingTypeName instanceof ParameterizedTypeName
-        ? ImmutableList.copyOf(((ParameterizedTypeName) bindingTypeName).typeArguments)
-        : ImmutableList.<TypeName>of();
+    ImmutableList<TypeVariableName> typeParameters = bindingTypeElementTypeVariableNames(binding);
+    return typeParameters.isEmpty()
+        ? className
+        : ParameterizedTypeName.get(className, Iterables.toArray(typeParameters, TypeName.class));
   }
 
   static ClassName membersInjectorNameForType(TypeElement typeElement) {
@@ -264,10 +215,9 @@ class SourceFiles {
         return "";
 
       case PROVISION:
-      case IMMEDIATE:
-      case FUTURE_PRODUCTION:
+      case PRODUCTION:
         return CaseFormat.LOWER_CAMEL.to(
-            UPPER_CAMEL, binding.bindingElement().getSimpleName().toString());
+            UPPER_CAMEL, binding.bindingElement().get().getSimpleName().toString());
 
       default:
         throw new IllegalArgumentException();
@@ -275,11 +225,61 @@ class SourceFiles {
   }
 
   static ImmutableList<TypeVariableName> bindingTypeElementTypeVariableNames(Binding binding) {
+    if (binding instanceof ContributionBinding) {
+      ContributionBinding contributionBinding = (ContributionBinding) binding;
+      if (!contributionBinding.bindingKind().equals(INJECTION)
+          && !contributionBinding.requiresModuleInstance()) {
+        return ImmutableList.of();
+      }
+    }
     ImmutableList.Builder<TypeVariableName> builder = ImmutableList.builder();
-    for (TypeParameterElement typeParameter : binding.bindingTypeElement().getTypeParameters()) {
+    for (TypeParameterElement typeParameter :
+        binding.bindingTypeElement().get().getTypeParameters()) {
       builder.add(TypeVariableName.get(typeParameter));
     }
     return builder.build();
+  }
+
+  /**
+   * Returns a name to be used for variables of the given {@linkplain TypeElement type}. Prefer
+   * semantically meaningful variable names, but if none can be derived, this will produce something
+   * readable.
+   */
+  // TODO(gak): maybe this should be a function of TypeMirrors instead of Elements?
+  static String simpleVariableName(TypeElement typeElement) {
+    String candidateName = UPPER_CAMEL.to(LOWER_CAMEL, typeElement.getSimpleName().toString());
+    String variableName = protectAgainstKeywords(candidateName);
+    verify(isName(variableName), "'%s' was expected to be a valid variable name");
+    return variableName;
+  }
+
+  private static String protectAgainstKeywords(String candidateName) {
+    switch (candidateName) {
+      case "package":
+        return "pkg";
+      case "boolean":
+        return "b";
+      case "double":
+        return "d";
+      case "byte":
+        return "b";
+      case "int":
+        return "i";
+      case "short":
+        return "s";
+      case "char":
+        return "c";
+      case "void":
+        return "v";
+      case "class":
+        return "clazz";
+      case "float":
+        return "f";
+      case "long":
+        return "l";
+      default:
+        return SourceVersion.isKeyword(candidateName) ? candidateName + '_' : candidateName;
+    }
   }
 
   private SourceFiles() {}

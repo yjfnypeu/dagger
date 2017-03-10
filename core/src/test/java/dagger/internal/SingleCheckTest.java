@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Google, Inc.
+ * Copyright (C) 2014 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,14 +13,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.internal;
 
+import static com.google.common.truth.Truth.assertThat;
+
+import java.util.concurrent.atomic.AtomicInteger;
 import javax.inject.Provider;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
-
-import static com.google.common.truth.Truth.assertThat;
 
 /**
  * Tests {@link SingleCheck}.
@@ -34,16 +36,8 @@ public class SingleCheckTest {
 
   @Test
   public void get() {
-    Provider<Integer> provider =
-        SingleCheck.provider(
-            new Factory<Integer>() {
-              int i = 0;
-
-              @Override
-              public Integer get() {
-                return i++;
-              }
-            });
+    AtomicInteger integer = new AtomicInteger();
+    Provider<Integer> provider = SingleCheck.provider(integer::getAndIncrement);
     assertThat(provider.get()).isEqualTo(0);
     assertThat(provider.get()).isEqualTo(0);
     assertThat(provider.get()).isEqualTo(0);

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Google, Inc.
+ * Copyright (C) 2016 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.internal.codegen;
+
+import static com.google.common.collect.Iterables.getOnlyElement;
+import static dagger.internal.codegen.BindingMethodValidator.Abstractness.MUST_BE_ABSTRACT;
+import static dagger.internal.codegen.BindingMethodValidator.AllowsMultibindings.ALLOWS_MULTIBINDINGS;
+import static dagger.internal.codegen.BindingMethodValidator.ExceptionSuperclass.RUNTIME_EXCEPTION;
+import static dagger.internal.codegen.ErrorMessages.BINDS_ELEMENTS_INTO_SET_METHOD_RETURN_SET;
+import static dagger.internal.codegen.ErrorMessages.BINDS_METHOD_ONE_ASSIGNABLE_PARAMETER;
 
 import com.google.auto.common.MoreElements;
 import com.google.auto.common.MoreTypes;
@@ -21,29 +29,18 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import dagger.Binds;
 import dagger.Module;
-import dagger.multibindings.IntoMap;
 import dagger.producers.ProducerModule;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import javax.lang.model.element.AnnotationMirror;
 import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.element.VariableElement;
-import javax.lang.model.type.TypeMirror;
 import javax.lang.model.type.DeclaredType;
+import javax.lang.model.type.TypeMirror;
 import javax.lang.model.util.ElementFilter;
 import javax.lang.model.util.Elements;
 import javax.lang.model.util.Types;
-
-import static com.google.auto.common.MoreElements.isAnnotationPresent;
-import static com.google.common.collect.Iterables.getOnlyElement;
-import static dagger.internal.codegen.BindingMethodValidator.Abstractness.MUST_BE_ABSTRACT;
-import static dagger.internal.codegen.BindingMethodValidator.ExceptionSuperclass.RUNTIME_EXCEPTION;
-import static dagger.internal.codegen.ErrorMessages.BINDING_METHOD_NOT_MAP_HAS_MAP_KEY;
-import static dagger.internal.codegen.ErrorMessages.BINDS_ELEMENTS_INTO_SET_METHOD_RETURN_SET;
-import static dagger.internal.codegen.ErrorMessages.BINDS_METHOD_ONE_ASSIGNABLE_PARAMETER;
-import static dagger.internal.codegen.MapKeys.getMapKeys;
 
 /**
  * A validator for {@link Binds} methods.
@@ -59,7 +56,8 @@ final class BindsMethodValidator extends BindingMethodValidator {
         Binds.class,
         ImmutableSet.of(Module.class, ProducerModule.class),
         MUST_BE_ABSTRACT,
-        RUNTIME_EXCEPTION);
+        RUNTIME_EXCEPTION,
+        ALLOWS_MULTIBINDINGS);
     this.types = types;
     this.elements = elements;
   }
@@ -70,21 +68,12 @@ final class BindsMethodValidator extends BindingMethodValidator {
     checkParameters(builder);
   }
 
-  @Override // TODO(dpb, ronshapiro): When @Binds methods support @IntoMap, stop overriding.
-  protected void checkMapKeys(ValidationReport.Builder<ExecutableElement> builder) {
-    if (!isAnnotationPresent(builder.getSubject(), IntoMap.class)) {
-      for (AnnotationMirror mapKey : getMapKeys(builder.getSubject())) {
-        builder.addError(BINDING_METHOD_NOT_MAP_HAS_MAP_KEY, builder.getSubject(), mapKey);
-      }
-    }
-  }
-
   private void checkParameters(ValidationReport.Builder<ExecutableElement> builder) {
     ExecutableElement method = builder.getSubject();
     List<? extends VariableElement> parameters = method.getParameters();
     if (parameters.size() == 1) {
       VariableElement parameter = getOnlyElement(parameters);
-      TypeMirror leftHandSide = method.getReturnType();
+      TypeMirror leftHandSide = boxIfNecessary(method.getReturnType());
       TypeMirror rightHandSide = parameter.asType();
       ContributionType contributionType = ContributionType.fromBindingMethod(method);
       switch (contributionType) {
@@ -162,5 +151,12 @@ final class BindsMethodValidator extends BindingMethodValidator {
 
   private TypeMirror unboundedWildcard() {
     return types.getWildcardType(null, null);
+  }
+
+  private TypeMirror boxIfNecessary(TypeMirror maybePrimitive) {
+    if (maybePrimitive.getKind().isPrimitive()) {
+      return types.boxedClass(MoreTypes.asPrimitiveType(maybePrimitive)).asType();
+    }
+    return maybePrimitive;
   }
 }

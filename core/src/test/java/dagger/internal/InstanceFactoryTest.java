@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Google, Inc.
+ * Copyright (C) 2014 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,30 +13,31 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.internal;
 
-import org.junit.Rule;
+import static com.google.common.truth.Truth.assertThat;
+import static org.junit.Assert.fail;
+
 import org.junit.Test;
-import org.junit.rules.ExpectedException;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
-import static com.google.common.truth.Truth.assert_;
-
 @RunWith(JUnit4.class)
 public final class InstanceFactoryTest {
-  @Rule public final ExpectedException thrown = ExpectedException.none();
-
   @Test public void instanceFactory() {
     Object instance = new Object();
     Factory<Object> factory = InstanceFactory.create(instance);
-    assert_().that(factory.get()).isEqualTo(instance);
-    assert_().that(factory.get()).isEqualTo(instance);
-    assert_().that(factory.get()).isEqualTo(instance);
+    assertThat(factory.get()).isEqualTo(instance);
+    assertThat(factory.get()).isEqualTo(instance);
+    assertThat(factory.get()).isEqualTo(instance);
   }
 
   @Test public void create_throwsNullPointerException() {
-    thrown.expect(NullPointerException.class);
-    InstanceFactory.create(null);
+    try {
+      InstanceFactory.create(null);
+      fail();
+    } catch (NullPointerException expected) {
+    }
   }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Google, Inc.
+ * Copyright (C) 2016 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.internal.codegen;
+
+import static dagger.internal.codegen.DaggerElements.getAnnotationMirror;
+import static dagger.internal.codegen.DaggerElements.isAnyAnnotationPresent;
+import static dagger.internal.codegen.ErrorMessages.MULTIBINDING_ANNOTATION_NOT_ON_BINDING_METHOD;
 
 import com.google.auto.common.BasicAnnotationProcessor.ProcessingStep;
 import com.google.common.collect.ImmutableSet;
@@ -32,13 +37,9 @@ import javax.lang.model.element.AnnotationMirror;
 import javax.lang.model.element.Element;
 import javax.tools.Diagnostic.Kind;
 
-import static com.google.auto.common.MoreElements.getAnnotationMirror;
-import static dagger.internal.codegen.ErrorMessages.MULTIBINDING_ANNOTATION_NOT_ON_BINDING_METHOD;
-import static dagger.internal.codegen.Util.isAnyAnnotationPresent;
-
 /**
- * Processing step which verifies that {@link IntoSet @IntoSet}, {@link ElementsIntoSet
- * @ElementsIntoSet} and {@link IntoMap @IntoMap} are not present on invalid elements.
+ * Processing step that verifies that {@link IntoSet}, {@link ElementsIntoSet} and {@link IntoMap}
+ * are not present on invalid elements.
  */
 final class MultibindingAnnotationsProcessingStep implements ProcessingStep {
 

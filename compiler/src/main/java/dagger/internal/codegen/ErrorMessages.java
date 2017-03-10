@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Google, Inc.
+ * Copyright (C) 2014 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,15 +13,30 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.internal.codegen;
 
+import static dagger.internal.codegen.ConfigurationAnnotations.getSubcomponentAnnotation;
+import static dagger.internal.codegen.MoreAnnotationMirrors.simpleName;
+import static java.util.stream.Collectors.joining;
+import static java.util.stream.Collectors.toList;
+
+import com.google.auto.common.MoreElements;
 import com.google.auto.common.MoreTypes;
+import com.google.common.base.Joiner;
 import dagger.Multibindings;
-import dagger.Provides;
 import dagger.multibindings.Multibinds;
+import dagger.releasablereferences.CanReleaseReferences;
+import dagger.releasablereferences.ForReleasableReferences;
+import java.lang.annotation.Annotation;
+import java.util.Collection;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import javax.lang.model.element.AnnotationMirror;
+import javax.lang.model.element.ExecutableElement;
+import javax.lang.model.element.TypeElement;
+import javax.lang.model.type.DeclaredType;
 import javax.lang.model.type.TypeMirror;
 
 /**
@@ -35,6 +50,7 @@ final class ErrorMessages {
    * Common constants.
    */
   static final String INDENT = "    ";
+  static final String DOUBLE_INDENT = INDENT + INDENT;
   static final int DUPLICATE_SIZE_LIMIT = 10;
 
   /*
@@ -180,8 +196,15 @@ final class ErrorMessages {
   static final String BINDS_METHOD_ONE_ASSIGNABLE_PARAMETER =
       "@Binds methods must have only one parameter whose type is assignable to the return type";
 
-  static final String BINDING_METHOD_NOT_IN_MODULE =
-      "@%s methods can only be present within a @%s";
+  static final String BINDS_OPTIONAL_OF_METHOD_HAS_PARAMETER =
+      "@BindsOptionalOf methods must not have parameters";
+
+  static final String BINDS_OPTIONAL_OF_METHOD_RETURNS_IMPLICITLY_PROVIDED_TYPE =
+      "@BindsOptionalOf methods cannot "
+          + "return unqualified types that have an @Inject-annotated constructor because those are "
+          + "always present";
+
+  static final String BINDING_METHOD_NOT_IN_MODULE = "@%s methods can only be present within a @%s";
 
   static final String BINDS_ELEMENTS_INTO_SET_METHOD_RETURN_SET =
       "@Binds @ElementsIntoSet methods must return a Set and take a Set parameter";
@@ -192,7 +215,7 @@ final class ErrorMessages {
   static final String BINDING_METHOD_WITH_NO_MAP_KEY =
       "@%s methods of type map must declare a map key";
 
-  static final String BINDING_METHOD_WITH_MULTIPLE_MAP_KEY =
+  static final String BINDING_METHOD_WITH_MULTIPLE_MAP_KEYS =
       "@%s methods may not have more than one @MapKey-marked annotation";
 
   static final String BINDING_METHOD_WITH_SAME_NAME =
@@ -231,7 +254,7 @@ final class ErrorMessages {
       "Map key annotations with unwrapped values cannot use arrays";
 
   /* collection binding errors */
-  static final String MULTIPLE_BINDING_TYPES_FOR_KEY_FORMAT =
+  static final String MULTIPLE_CONTRIBUTION_TYPES_FOR_KEY_FORMAT =
       "%s has incompatible bindings or declarations:\n";
 
   static final String PROVIDER_ENTRY_POINT_MAY_NOT_DEPEND_ON_PRODUCER_FORMAT =
@@ -274,7 +297,7 @@ final class ErrorMessages {
   static final String MEMBERS_INJECTION_WITH_UNBOUNDED_TYPE =
       "Type parameters must be bounded for members injection. %s required by %s, via:\n%s";
 
-  static final String CONTAINS_DEPENDENCY_CYCLE_FORMAT = "%s.%s() contains a dependency cycle:\n%s";
+  static final String CONTAINS_DEPENDENCY_CYCLE_FORMAT = "Found a dependency cycle:\n%s";
 
   static String nullableToNonNullable(String typeName, String bindingString) {
     return String.format(
@@ -299,6 +322,17 @@ final class ErrorMessages {
   static final String MULTIBINDING_ANNOTATION_CONFLICTS_WITH_BINDING_ANNOTATION_ENUM =
       "@%s.type cannot be used with multibinding annotations";
 
+  /* BindsInstance messages. */
+  static final String BINDS_INSTANCE_IN_MODULE =
+      "@BindsInstance methods should not be included in @%ss. Did you mean @Binds?";
+
+  static final String BINDS_INSTANCE_IN_INVALID_COMPONENT =
+      "@BindsInstance methods should not be included in @%1$ss. "
+          + "Did you mean to put it in a @%1$s.Builder?";
+
+  static final String BINDS_INSTANCE_ONE_PARAMETER =
+      "@BindsInstance methods should have exactly one parameter for the bound type";
+
   static ComponentBuilderMessages builderMsgsFor(ComponentDescriptor.Kind kind) {
     switch(kind) {
       case COMPONENT:
@@ -312,6 +346,75 @@ final class ErrorMessages {
       default:
         throw new IllegalStateException(kind.toString());
     }
+  }
+
+  static final String CAN_RELEASE_REFERENCES_ANNOTATIONS_MUST_NOT_HAVE_SOURCE_RETENTION =
+      "@CanReleaseReferences annotations must not have SOURCE retention";
+
+  static String forReleasableReferencesValueNotAScope(TypeElement scopeType) {
+    return forReleasableReferencesValueNeedsAnnotation(
+        scopeType,
+        String.format(
+            "@%s and @%s",
+            javax.inject.Scope.class.getCanonicalName(),
+            CanReleaseReferences.class.getCanonicalName()));
+  }
+
+  static String forReleasableReferencesValueCannotReleaseReferences(TypeElement scopeType) {
+    return forReleasableReferencesValueNeedsAnnotation(
+        scopeType, "@" + CanReleaseReferences.class.getCanonicalName());
+  }
+
+  private static String forReleasableReferencesValueNeedsAnnotation(
+      TypeElement scopeType, String annotations) {
+    return String.format(
+        "The value of @%s must be a reference-releasing scope. "
+            + "Did you mean to annotate %s with %s? Or did you mean to use a different class here?",
+        ForReleasableReferences.class.getSimpleName(), scopeType.getQualifiedName(), annotations);
+  }
+
+  static String referenceReleasingScopeNotInComponentHierarchy(
+      String formattedKey, Scope scope, BindingGraph topLevelGraph) {
+    return String.format(
+        "There is no binding for %s because no component in %s's component hierarchy is "
+            + "annotated with %s. The available reference-releasing scopes are %s.",
+        formattedKey,
+        topLevelGraph.componentType().getQualifiedName(),
+        scope.getReadableSource(),
+        topLevelGraph
+            .componentDescriptor()
+            .releasableReferencesScopes()
+            .stream()
+            .map(Scope::getReadableSource)
+            .collect(toList()));
+  }
+
+  static String referenceReleasingScopeMetadataMissingCanReleaseReferences(
+      String formattedKey, DeclaredType metadataType) {
+    return String.format(
+        "There is no binding for %s because %s is not annotated with @%s.",
+        formattedKey, metadataType, CanReleaseReferences.class.getCanonicalName());
+  }
+
+  static String referenceReleasingScopeNotAnnotatedWithMetadata(
+      String formattedKey, Scope scope, TypeMirror metadataType) {
+    return String.format(
+        "There is no binding for %s because %s is not annotated with @%s.",
+        formattedKey, scope.getQualifiedName(), metadataType);
+  }
+
+  /**
+   * Returns an error message for a method that has more than one binding method annotation.
+   *
+   * @param methodAnnotations the valid method annotations, only one of which may annotate the
+   *     method
+   */
+  static String tooManyBindingMethodAnnotations(
+      ExecutableElement method, Collection<Class<? extends Annotation>> methodAnnotations) {
+    return String.format(
+        "%s is annotated with more than one of (%s)",
+        method.getSimpleName(),
+        methodAnnotations.stream().map(Class::getCanonicalName).collect(joining(", ")));
   }
 
   static class ComponentBuilderMessages {
@@ -385,13 +488,12 @@ final class ErrorMessages {
 
     final String buildMustReturnComponentType() {
       return process(
-          "@Component.Builder methods that have no arguments must return the @Component type");
+          "@Component.Builder methods that have no arguments must return the @Component type or a "
+              + "supertype of the @Component");
     }
 
     final String inheritedBuildMustReturnComponentType() {
-      return process(
-          "@Component.Builder methods that have no arguments must return the @Component type"
-          + " Inherited method: %s");
+      return process(buildMustReturnComponentType() + ". Inherited method: %s");
     }
 
     final String methodsMustTakeOneArg() {
@@ -420,6 +522,23 @@ final class ErrorMessages {
     final String inheritedMethodsMayNotHaveTypeParameters() {
       return process(
           "@Component.Builder methods must not have type parameters. Inherited method: %s");
+    }
+
+    final String buildMethodReturnsSupertypeWithMissingMethods(
+        TypeElement component,
+        TypeElement componentBuilder,
+        TypeMirror returnType,
+        ExecutableElement buildMethod,
+        Set<ExecutableElement> additionalMethods) {
+      return String.format(
+          "%1$s.%2$s() returns %3$s, but %4$s declares additional component method(s): %5$s. In "
+              + "order to provide type-safe access to these methods, override %2$s() to return "
+              + "%4$s",
+          componentBuilder.getQualifiedName(),
+          buildMethod.getSimpleName(),
+          returnType,
+          component.getQualifiedName(),
+          Joiner.on(", ").join(additionalMethods));
     }
   }
 
@@ -490,11 +609,36 @@ final class ErrorMessages {
     static final String METHOD_MUST_RETURN_MAP_OR_SET =
         "@%s methods must return Map<K, V> or Set<T>";
 
-    static final String NO_MAP_KEY = "@%s methods must not have a @MapKey annotation";
-
     static final String PARAMETERS = "@%s methods cannot have parameters";
 
     private MultibindsMessages() {}
+  }
+
+  static class ModuleMessages {
+    static String moduleSubcomponentsIncludesBuilder(TypeElement moduleSubcomponentsAttribute) {
+      TypeElement subcomponentType =
+          MoreElements.asType(moduleSubcomponentsAttribute.getEnclosingElement());
+      return String.format(
+          "%s is a @%s.Builder. Did you mean to use %s?",
+          moduleSubcomponentsAttribute.getQualifiedName(),
+          simpleName(getSubcomponentAnnotation(subcomponentType).get()),
+          subcomponentType.getQualifiedName());
+    }
+
+    static String moduleSubcomponentsIncludesNonSubcomponent(
+        TypeElement moduleSubcomponentsAttribute) {
+      return moduleSubcomponentsAttribute.getQualifiedName()
+          + " is not a @Subcomponent or @ProductionSubcomponent";
+    }
+
+    static String moduleSubcomponentsDoesntHaveBuilder(
+        TypeElement subcomponent, AnnotationMirror moduleAnnotation) {
+      return String.format(
+          "%s doesn't have a @%s.Builder, which is required when used with @%s.subcomponents",
+          subcomponent.getQualifiedName(),
+          simpleName(getSubcomponentAnnotation(subcomponent).get()),
+          simpleName(moduleAnnotation));
+    }
   }
 
   /**
@@ -528,9 +672,6 @@ final class ErrorMessages {
    *     through this method.
    */
   static String stripCommonTypePrefixes(String type) {
-    // Special case this enum's constants since they will be incredibly common.
-    type = type.replace(Provides.Type.class.getCanonicalName() + ".", "");
-
     // Do regex magic to remove common packages we care to shorten.
     Matcher matcher = COMMON_PACKAGE_PATTERN.matcher(type);
     StringBuilder result = new StringBuilder();

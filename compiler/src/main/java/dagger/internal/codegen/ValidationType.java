@@ -1,5 +1,5 @@
 /*
-* Copyright (C) 2015 Google, Inc.
+* Copyright (C) 2015 The Dagger Authors.
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -13,9 +13,10 @@
 * See the License for the specific language governing permissions and
 * limitations under the License.
 */
+
 package dagger.internal.codegen;
 
-import com.google.common.base.Optional;
+import java.util.Optional;
 import javax.tools.Diagnostic;
 
 /**
@@ -34,7 +35,7 @@ enum ValidationType {
       case WARNING:
         return Optional.of(Diagnostic.Kind.WARNING);
       default:
-        return Optional.absent();
+        return Optional.empty();
     }
   }
 }

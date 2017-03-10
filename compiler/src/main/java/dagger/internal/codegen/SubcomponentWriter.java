@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 Google, Inc.
+ * Copyright (C) 2015 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,29 +13,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.internal.codegen;
 
-import com.google.auto.common.MoreTypes;
-import com.google.common.base.CaseFormat;
-import com.google.common.base.Optional;
-import com.google.common.collect.ImmutableList;
-import com.squareup.javapoet.ClassName;
-import com.squareup.javapoet.CodeBlock;
-import com.squareup.javapoet.FieldSpec;
-import com.squareup.javapoet.MethodSpec;
-import com.squareup.javapoet.TypeName;
-import com.squareup.javapoet.TypeSpec;
-import dagger.internal.Preconditions;
-import dagger.internal.codegen.ComponentDescriptor.BuilderSpec;
-import java.util.List;
-import java.util.Set;
-import javax.lang.model.element.ExecutableElement;
-import javax.lang.model.element.TypeElement;
-import javax.lang.model.element.VariableElement;
-import javax.lang.model.type.ExecutableType;
-import javax.lang.model.type.TypeMirror;
-
 import static com.google.common.base.CaseFormat.LOWER_CAMEL;
+import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.base.Verify.verify;
 import static com.google.common.collect.Sets.difference;
 import static com.squareup.javapoet.MethodSpec.methodBuilder;
@@ -48,26 +30,43 @@ import static javax.lang.model.element.Modifier.FINAL;
 import static javax.lang.model.element.Modifier.PRIVATE;
 import static javax.lang.model.element.Modifier.PUBLIC;
 
+import com.google.auto.common.MoreTypes;
+import com.google.common.base.CaseFormat;
+import com.google.common.collect.ImmutableList;
+import com.squareup.javapoet.ClassName;
+import com.squareup.javapoet.CodeBlock;
+import com.squareup.javapoet.FieldSpec;
+import com.squareup.javapoet.MethodSpec;
+import com.squareup.javapoet.TypeName;
+import com.squareup.javapoet.TypeSpec;
+import dagger.internal.Preconditions;
+import dagger.internal.codegen.ComponentDescriptor.ComponentMethodDescriptor;
+import java.util.List;
+import java.util.Optional;
+import java.util.Set;
+import javax.lang.model.element.TypeElement;
+import javax.lang.model.element.VariableElement;
+import javax.lang.model.type.ExecutableType;
+import javax.lang.model.type.TypeMirror;
+
 /**
  * Creates the nested implementation class for a subcomponent.
  */
 final class SubcomponentWriter extends AbstractComponentWriter {
 
-  private AbstractComponentWriter parent;
-  private ExecutableElement subcomponentFactoryMethod;
+  private final AbstractComponentWriter parent;
 
-  public SubcomponentWriter(
+  /**
+   * The parent's factory method to create this subcomponent, or {@link Optional#empty()} if the
+   * subcomponent was added via {@link dagger.Module#subcomponents()}.
+   */
+  private final Optional<ComponentMethodDescriptor> subcomponentFactoryMethod;
+
+  SubcomponentWriter(
       AbstractComponentWriter parent,
-      ExecutableElement subcomponentFactoryMethod,
+      Optional<ComponentMethodDescriptor> subcomponentFactoryMethod,
       BindingGraph subgraph) {
-    super(
-        parent.types,
-        parent.elements,
-        parent.keyFactory,
-        parent.compilerOptions,
-        subcomponentName(parent, subgraph),
-        subgraph,
-        parent.subcomponentNames);
+    super(parent, subcomponentName(parent, subgraph), subgraph);
     this.parent = parent;
     this.subcomponentFactoryMethod = subcomponentFactoryMethod;
   }
@@ -86,36 +85,47 @@ final class SubcomponentWriter extends AbstractComponentWriter {
   }
 
   @Override
-  protected Optional<CodeBlock> getOrCreateComponentContributionFieldExpression(
-      TypeElement contributionType) {
-    return super.getOrCreateComponentContributionFieldExpression(contributionType)
-        .or(parent.getOrCreateComponentContributionFieldExpression(contributionType));
+  protected Optional<CodeBlock> getOrCreateComponentRequirementFieldExpression(
+      ComponentRequirement componentRequirement) {
+    Optional<CodeBlock> expression =
+        super.getOrCreateComponentRequirementFieldExpression(componentRequirement);
+    return expression.isPresent()
+        ? expression
+        : parent.getOrCreateComponentRequirementFieldExpression(componentRequirement);
   }
 
   @Override
-  protected MemberSelect getMemberSelect(BindingKey key) {
+  public MemberSelect getMemberSelect(BindingKey key) {
     MemberSelect memberSelect = super.getMemberSelect(key);
     return memberSelect == null ? parent.getMemberSelect(key) : memberSelect;
   }
 
+  @Override
+  protected CodeBlock getReferenceReleasingProviderManagerExpression(Scope scope) {
+    return parent.getReferenceReleasingProviderManagerExpression(scope);
+  }
+
   private ExecutableType resolvedSubcomponentFactoryMethod() {
+    checkState(
+        subcomponentFactoryMethod.isPresent(),
+        "%s does not have a factory method for %s",
+        parent.graph.componentType(),
+        graph.componentType());
     return MoreTypes.asExecutable(
         types.asMemberOf(
-            MoreTypes.asDeclared(parent.componentDefinitionType().asType()),
-            subcomponentFactoryMethod));
+            MoreTypes.asDeclared(parent.graph.componentType().asType()),
+            subcomponentFactoryMethod.get().methodElement()));
   }
 
   @Override
-  protected TypeSpec.Builder createComponentClass() {
-    TypeSpec.Builder subcomponent = classBuilder(name).addModifiers(PRIVATE, FINAL);
-
+  protected void decorateComponent() {
+    component.addModifiers(PRIVATE, FINAL);
     addSupertype(
-        subcomponent,
+        component,
         MoreTypes.asTypeElement(
             graph.componentDescriptor().builderSpec().isPresent()
                 ? graph.componentDescriptor().builderSpec().get().componentType()
                 : resolvedSubcomponentFactoryMethod().getReturnType()));
-    return subcomponent;
   }
 
   @Override
@@ -145,34 +155,36 @@ final class SubcomponentWriter extends AbstractComponentWriter {
 
   @Override
   protected void addFactoryMethods() {
+    if (!subcomponentFactoryMethod.isPresent()
+        || !subcomponentFactoryMethod.get().kind().isSubcomponentKind()) {
+      // subcomponent builder methods are implemented in
+      // AbstractComponentWriter.implementInterfaceMethods
+      return;
+    }
     MethodSpec.Builder componentMethod =
-        methodBuilder(subcomponentFactoryMethod.getSimpleName().toString())
+        methodBuilder(subcomponentFactoryMethod.get().methodElement().getSimpleName().toString())
             .addModifiers(PUBLIC)
             .addAnnotation(Override.class);
-    if (graph.componentDescriptor().builderSpec().isPresent()) {
-      BuilderSpec spec = graph.componentDescriptor().builderSpec().get();
-      componentMethod
-          .returns(ClassName.get(spec.builderDefinitionType()))
-          .addStatement("return new $T()", builderName.get());
-    } else {
-      ExecutableType resolvedMethod = resolvedSubcomponentFactoryMethod();
-      componentMethod.returns(ClassName.get(resolvedMethod.getReturnType()));
-      writeSubcomponentWithoutBuilder(componentMethod, resolvedMethod);
-    }
+    ExecutableType resolvedMethod = resolvedSubcomponentFactoryMethod();
+    componentMethod.returns(ClassName.get(resolvedMethod.getReturnType()));
+    writeSubcomponentWithoutBuilder(componentMethod, resolvedMethod);
     parent.component.addMethod(componentMethod.build());
   }
 
   private void writeSubcomponentWithoutBuilder(
       MethodSpec.Builder componentMethod, ExecutableType resolvedMethod) {
     ImmutableList.Builder<CodeBlock> subcomponentConstructorParameters = ImmutableList.builder();
-    List<? extends VariableElement> params = subcomponentFactoryMethod.getParameters();
+    List<? extends VariableElement> params =
+        subcomponentFactoryMethod.get().methodElement().getParameters();
     List<? extends TypeMirror> paramTypes = resolvedMethod.getParameterTypes();
     for (int i = 0; i < params.size(); i++) {
       VariableElement moduleVariable = params.get(i);
       TypeElement moduleTypeElement = MoreTypes.asTypeElement(paramTypes.get(i));
+      ComponentRequirement componentRequirement =
+          ComponentRequirement.forModule(moduleTypeElement.asType());
       TypeName moduleType = TypeName.get(paramTypes.get(i));
       componentMethod.addParameter(moduleType, moduleVariable.getSimpleName().toString());
-      if (!componentContributionFields.containsKey(moduleTypeElement)) {
+      if (!componentContributionFields.containsKey(componentRequirement)) {
         String preferredModuleName =
             CaseFormat.UPPER_CAMEL.to(LOWER_CAMEL, moduleTypeElement.getSimpleName().toString());
         FieldSpec contributionField =
@@ -190,16 +202,18 @@ final class SubcomponentWriter extends AbstractComponentWriter {
                 Preconditions.class);
 
         MemberSelect moduleSelect = localField(name, actualModuleName);
-        componentContributionFields.put(moduleTypeElement, moduleSelect);
+        componentContributionFields.put(componentRequirement, moduleSelect);
         subcomponentConstructorParameters.add(
             CodeBlock.of("$L", moduleVariable.getSimpleName()));
       }
     }
 
-    Set<TypeElement> uninitializedModules =
+    Set<ComponentRequirement> uninitializedModules =
         difference(graph.componentRequirements(), componentContributionFields.keySet());
 
-    for (TypeElement moduleType : uninitializedModules) {
+    for (ComponentRequirement componentRequirement : uninitializedModules) {
+      checkState(componentRequirement.kind().equals(ComponentRequirement.Kind.MODULE));
+      TypeElement moduleType = componentRequirement.typeElement();
       String preferredModuleName =
           CaseFormat.UPPER_CAMEL.to(LOWER_CAMEL, moduleType.getSimpleName().toString());
       FieldSpec contributionField =
@@ -211,7 +225,7 @@ final class SubcomponentWriter extends AbstractComponentWriter {
       constructor.addStatement(
           "this.$L = new $T()", actualModuleName, ClassName.get(moduleType));
       MemberSelect moduleSelect = localField(name, actualModuleName);
-      componentContributionFields.put(moduleType, moduleSelect);
+      componentContributionFields.put(componentRequirement, moduleSelect);
     }
 
     componentMethod.addStatement("return new $T($L)",

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012 Square, Inc.
+ * Copyright (C) 2012 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,8 +13,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger;
 
+import dagger.internal.Beta;
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -33,4 +35,14 @@ public @interface Module {
    * to the object graph.
    */
   Class<?>[] includes() default {};
+
+  /**
+   * Any {@link Subcomponent}- or {@code @ProductionSubcomponent}-annotated classes which should be
+   * children of the component in which this module is installed. A subcomponent may be listed in
+   * more than one module in a component.
+   *
+   * @since 2.7
+   */
+  @Beta
+  Class<?>[] subcomponents() default {};
 }

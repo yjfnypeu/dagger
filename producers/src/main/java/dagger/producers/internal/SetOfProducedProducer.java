@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 Google, Inc.
+ * Copyright (C) 2015 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.producers.internal;
+
+import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.common.util.concurrent.MoreExecutors.directExecutor;
+import static dagger.internal.DaggerCollections.hasDuplicates;
+import static dagger.internal.DaggerCollections.presizedList;
 
 import com.google.common.base.Function;
 import com.google.common.collect.ImmutableSet;
@@ -26,10 +32,6 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
-
-import static com.google.common.base.Preconditions.checkNotNull;
-import static dagger.internal.DaggerCollections.hasDuplicates;
-import static dagger.internal.DaggerCollections.presizedList;
 
 /**
  * A {@link Producer} implementation used to implement {@link Set} bindings. This producer returns a
@@ -168,6 +170,7 @@ public final class SetOfProducedProducer<T> extends AbstractProducer<Set<Produce
             }
             return builder.build();
           }
-        });
+        },
+        directExecutor());
   }
 }

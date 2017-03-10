@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 Google, Inc.
+ * Copyright (C) 2015 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,11 +13,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.internal.codegen;
+
+import static com.google.auto.common.MoreElements.getLocalAndInheritedMethods;
+import static com.google.auto.common.MoreElements.isAnnotationPresent;
+import static com.google.common.base.Preconditions.checkArgument;
+import static javax.lang.model.element.ElementKind.INTERFACE;
 
 import com.google.auto.common.MoreTypes;
 import com.google.auto.value.AutoValue;
-import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableSet;
 import dagger.Module;
 import dagger.Multibindings;
@@ -27,6 +32,7 @@ import dagger.multibindings.Multibinds;
 import dagger.producers.Producer;
 import dagger.producers.ProducerModule;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import javax.inject.Provider;
 import javax.lang.model.element.Element;
@@ -37,11 +43,6 @@ import javax.lang.model.type.ExecutableType;
 import javax.lang.model.type.TypeMirror;
 import javax.lang.model.util.Elements;
 import javax.lang.model.util.Types;
-
-import static com.google.auto.common.MoreElements.getLocalAndInheritedMethods;
-import static com.google.auto.common.MoreElements.isAnnotationPresent;
-import static com.google.common.base.Preconditions.checkArgument;
-import static javax.lang.model.element.ElementKind.INTERFACE;
 
 /**
  * A declaration that a multibinding with a certain key is available to be injected in a component
@@ -102,7 +103,8 @@ abstract class MultibindingDeclaration extends BindingDeclaration
       DeclaredType interfaceType = MoreTypes.asDeclared(interfaceElement.asType());
 
       ImmutableSet.Builder<MultibindingDeclaration> declarations = ImmutableSet.builder();
-      for (ExecutableElement method : getLocalAndInheritedMethods(interfaceElement, elements)) {
+      for (ExecutableElement method :
+          getLocalAndInheritedMethods(interfaceElement, types, elements)) {
         if (!method.getEnclosingElement().equals(objectElement)) {
           ExecutableType methodType =
               MoreTypes.asExecutable(types.asMemberOf(interfaceType, method));
@@ -146,7 +148,7 @@ abstract class MultibindingDeclaration extends BindingDeclaration
           "%s must return a set or map",
           method);
       return new AutoValue_MultibindingDeclaration(
-          method,
+          Optional.<Element>of(method),
           Optional.of(contributingType),
           keyFactory.forMultibindsMethod(bindingType, methodType, method),
           contributionType(returnType),

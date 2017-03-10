@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 Google, Inc.
+ * Copyright (C) 2015 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package test.subcomponent;
+
+import static com.google.common.collect.Sets.intersection;
+import static com.google.common.truth.Truth.assertThat;
 
 import java.util.Arrays;
 import java.util.Collection;
@@ -22,9 +26,6 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 import org.junit.runners.Parameterized.Parameters;
-
-import static com.google.common.collect.Sets.intersection;
-import static com.google.common.truth.Truth.assertThat;
 
 @RunWith(Parameterized.class)
 public class SubcomponentTest {

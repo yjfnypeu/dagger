@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Google, Inc.
+ * Copyright (C) 2016 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,12 +13,20 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.internal.codegen;
+
+import static com.google.auto.common.AnnotationMirrors.getAnnotationValue;
+import static dagger.internal.codegen.MoreAnnotationValues.asAnnotationValues;
+import static dagger.internal.codegen.Util.toImmutableList;
 
 import com.google.auto.common.AnnotationMirrors;
 import com.google.common.base.Equivalence;
-import com.google.common.base.Optional;
+import com.google.common.collect.ImmutableList;
+import java.util.Optional;
 import javax.lang.model.element.AnnotationMirror;
+import javax.lang.model.element.Name;
+import javax.lang.model.type.TypeMirror;
 
 /**
  * A utility class for working with {@link AnnotationMirror} instances, similar to {@link
@@ -34,9 +42,7 @@ final class MoreAnnotationMirrors {
    */
   static Optional<Equivalence.Wrapper<AnnotationMirror>> wrapOptionalInEquivalence(
       Optional<AnnotationMirror> optional) {
-    return optional.isPresent()
-        ? Optional.of(AnnotationMirrors.equivalence().wrap(optional.get()))
-        : Optional.<Equivalence.Wrapper<AnnotationMirror>>absent();
+    return optional.map(AnnotationMirrors.equivalence()::wrap);
   }
 
   /**
@@ -45,8 +51,32 @@ final class MoreAnnotationMirrors {
    */
   static Optional<AnnotationMirror> unwrapOptionalEquivalence(
       Optional<Equivalence.Wrapper<AnnotationMirror>> wrappedOptional) {
-    return wrappedOptional.isPresent()
-        ? Optional.of(wrappedOptional.get().get())
-        : Optional.<AnnotationMirror>absent();
+    return wrappedOptional.map(Equivalence.Wrapper::get);
+  }
+
+  static Name simpleName(AnnotationMirror annotationMirror) {
+    return annotationMirror.getAnnotationType().asElement().getSimpleName();
+  }
+
+  /**
+   * Returns the value named {@code name} from {@code annotation}.
+   *
+   * @throws IllegalArgumentException unless that member represents a single type
+   */
+  static TypeMirror getTypeValue(AnnotationMirror annotation, String name) {
+    return MoreAnnotationValues.asType(getAnnotationValue(annotation, name));
+  }
+
+  /**
+   * Returns the list of types that is the value named {@code name} from {@code annotationMirror}.
+   *
+   * @throws IllegalArgumentException unless that member represents an array of types
+   */
+  static ImmutableList<TypeMirror> getTypeListValue(
+      AnnotationMirror annotationMirror, String name) {
+    return asAnnotationValues(getAnnotationValue(annotationMirror, name))
+        .stream()
+        .map(MoreAnnotationValues::asType)
+        .collect(toImmutableList());
   }
 }

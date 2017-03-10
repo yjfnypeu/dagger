@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Google, Inc.
+ * Copyright (C) 2014 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,41 +13,46 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.internal.codegen;
+
+import static com.google.auto.common.AnnotationMirrors.getAnnotationValue;
+import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.base.Preconditions.checkNotNull;
+import static dagger.internal.codegen.DaggerElements.getAnyAnnotation;
+import static dagger.internal.codegen.DaggerElements.isAnyAnnotationPresent;
+import static dagger.internal.codegen.MoreAnnotationMirrors.getTypeListValue;
+import static dagger.internal.codegen.MoreAnnotationValues.asAnnotationValues;
+import static javax.lang.model.util.ElementFilter.typesIn;
 
 import com.google.auto.common.MoreElements;
 import com.google.auto.common.MoreTypes;
-import com.google.common.base.Function;
-import com.google.common.base.Optional;
-import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Sets;
 import dagger.Component;
 import dagger.Module;
+import dagger.Subcomponent;
 import dagger.producers.ProducerModule;
+import dagger.producers.ProductionComponent;
+import dagger.producers.ProductionSubcomponent;
 import java.lang.annotation.Annotation;
 import java.util.ArrayDeque;
 import java.util.List;
+import java.util.Optional;
 import java.util.Queue;
 import java.util.Set;
 import javax.lang.model.element.AnnotationMirror;
 import javax.lang.model.element.AnnotationValue;
-import javax.lang.model.element.AnnotationValueVisitor;
 import javax.lang.model.element.Element;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.type.DeclaredType;
 import javax.lang.model.type.TypeKind;
 import javax.lang.model.type.TypeMirror;
-import javax.lang.model.util.ElementFilter;
 import javax.lang.model.util.Elements;
-import javax.lang.model.util.SimpleAnnotationValueVisitor6;
+import javax.lang.model.util.SimpleTypeVisitor6;
 import javax.lang.model.util.Types;
-
-import static com.google.auto.common.AnnotationMirrors.getAnnotationValue;
-import static com.google.auto.common.MoreElements.getAnnotationMirror;
-import static com.google.common.base.Preconditions.checkNotNull;
 
 /**
  * Utility methods related to dagger configuration annotations (e.g.: {@link Component}
@@ -57,35 +62,99 @@ import static com.google.common.base.Preconditions.checkNotNull;
  */
 final class ConfigurationAnnotations {
 
+  static Optional<AnnotationMirror> getComponentAnnotation(TypeElement component) {
+    return getAnyAnnotation(component, Component.class, ProductionComponent.class);
+  }
+
+  static Optional<AnnotationMirror> getSubcomponentAnnotation(TypeElement subcomponent) {
+    return getAnyAnnotation(subcomponent, Subcomponent.class, ProductionSubcomponent.class);
+  }
+
+  static Optional<AnnotationMirror> getComponentOrSubcomponentAnnotation(TypeElement type) {
+    Optional<AnnotationMirror> componentAnnotation = getComponentAnnotation(type);
+    if (componentAnnotation.isPresent()) {
+      return componentAnnotation;
+    }
+    return getSubcomponentAnnotation(type);
+  }
+
+  static boolean isSubcomponent(Element element) {
+    return isAnyAnnotationPresent(element, Subcomponent.class, ProductionSubcomponent.class);
+  }
+
+  static Optional<TypeElement> getSubcomponentBuilder(TypeElement subcomponent) {
+    checkArgument(isSubcomponent(subcomponent));
+    for (TypeElement nestedType : typesIn(subcomponent.getEnclosedElements())) {
+      if (isSubcomponentBuilder(nestedType)) {
+        return Optional.of(nestedType);
+      }
+    }
+    return Optional.empty();
+  }
+
+  static boolean isSubcomponentBuilder(Element element) {
+    return isAnyAnnotationPresent(
+        element, Subcomponent.Builder.class, ProductionSubcomponent.Builder.class);
+  }
+
+  /**
+   * Returns the annotation values for the modules directly installed into a component or included
+   * in a module.
+   *
+   * @param annotatedType the component or module type
+   * @param annotation the component or module annotation
+   */
+  static ImmutableList<AnnotationValue> getModules(
+      TypeElement annotatedType, AnnotationMirror annotation) {
+    if (ComponentDescriptor.Kind.forAnnotatedElement(annotatedType).isPresent()) {
+      return asAnnotationValues(getAnnotationValue(annotation, MODULES_ATTRIBUTE));
+    }
+    if (ModuleDescriptor.Kind.forAnnotatedElement(annotatedType).isPresent()) {
+      return asAnnotationValues(getAnnotationValue(annotation, INCLUDES_ATTRIBUTE));
+    }
+    throw new IllegalArgumentException(String.format("unsupported annotation: %s", annotation));
+  }
+
   private static final String MODULES_ATTRIBUTE = "modules";
 
   static ImmutableList<TypeMirror> getComponentModules(AnnotationMirror componentAnnotation) {
     checkNotNull(componentAnnotation);
-    return convertClassArrayToListOfTypes(componentAnnotation, MODULES_ATTRIBUTE);
+    return getTypeListValue(componentAnnotation, MODULES_ATTRIBUTE);
   }
 
   private static final String DEPENDENCIES_ATTRIBUTE = "dependencies";
 
   static ImmutableList<TypeMirror> getComponentDependencies(AnnotationMirror componentAnnotation) {
     checkNotNull(componentAnnotation);
-    return convertClassArrayToListOfTypes(componentAnnotation, DEPENDENCIES_ATTRIBUTE);
+    return getTypeListValue(componentAnnotation, DEPENDENCIES_ATTRIBUTE);
+  }
+
+  static Optional<AnnotationMirror> getModuleAnnotation(TypeElement moduleElement) {
+    return getAnyAnnotation(moduleElement, Module.class, ProducerModule.class);
   }
 
   private static final String INCLUDES_ATTRIBUTE = "includes";
 
   static ImmutableList<TypeMirror> getModuleIncludes(AnnotationMirror moduleAnnotation) {
     checkNotNull(moduleAnnotation);
-    return convertClassArrayToListOfTypes(moduleAnnotation, INCLUDES_ATTRIBUTE);
+    return getTypeListValue(moduleAnnotation, INCLUDES_ATTRIBUTE);
+  }
+
+  private static final String SUBCOMPONENTS_ATTRIBUTE = "subcomponents";
+
+  static ImmutableList<TypeMirror> getModuleSubcomponents(AnnotationMirror moduleAnnotation) {
+    checkNotNull(moduleAnnotation);
+    return getTypeListValue(moduleAnnotation, SUBCOMPONENTS_ATTRIBUTE);
   }
 
   private static final String INJECTS_ATTRIBUTE = "injects";
 
   static ImmutableList<TypeMirror> getModuleInjects(AnnotationMirror moduleAnnotation) {
     checkNotNull(moduleAnnotation);
-    return convertClassArrayToListOfTypes(moduleAnnotation, INJECTS_ATTRIBUTE);
+    return getTypeListValue(moduleAnnotation, INJECTS_ATTRIBUTE);
   }
 
-  /** Returns the first type that specifies this' nullability, or absent if none. */
+  /** Returns the first type that specifies this' nullability, or empty if none. */
   static Optional<DeclaredType> getNullableType(Element element) {
     List<? extends AnnotationMirror> mirrors = element.getAnnotationMirrors();
     for (AnnotationMirror mirror : mirrors) {
@@ -93,56 +162,38 @@ final class ConfigurationAnnotations {
         return Optional.of(mirror.getAnnotationType());
       }
     }
-    return Optional.absent();
+    return Optional.empty();
   }
 
-  /**
-   * Extracts the list of types that is the value of the annotation member {@code elementName} of
-   * {@code annotationMirror}.
-   *
-   * @throws IllegalArgumentException if no such member exists on {@code annotationMirror}, or it
-   *     exists but is not an array
-   * @throws TypeNotPresentException if any of the values cannot be converted to a type
-   */
-  static ImmutableList<TypeMirror> convertClassArrayToListOfTypes(
-      AnnotationMirror annotationMirror, String elementName) {
-    return TO_LIST_OF_TYPES.visit(getAnnotationValue(annotationMirror, elementName), elementName);
+  static <T extends Element> void validateComponentDependencies(
+      ValidationReport.Builder<T> report, Iterable<TypeMirror> types) {
+    validateTypesAreDeclared(report, types, "component dependency");
+    for (TypeMirror type : types) {
+      if (getModuleAnnotation(MoreTypes.asTypeElement(type)).isPresent()) {
+        report.addError(
+            String.format("%s is a module, which cannot be a component dependency", type));
+      }
+    }
   }
 
-  private static final AnnotationValueVisitor<ImmutableList<TypeMirror>, String> TO_LIST_OF_TYPES =
-      new SimpleAnnotationValueVisitor6<ImmutableList<TypeMirror>, String>() {
+  private static <T extends Element> void validateTypesAreDeclared(
+      final ValidationReport.Builder<T> report, Iterable<TypeMirror> types, final String typeName) {
+    for (TypeMirror type : types) {
+      type.accept(new SimpleTypeVisitor6<Void, Void>(){
         @Override
-        public ImmutableList<TypeMirror> visitArray(
-            List<? extends AnnotationValue> vals, String elementName) {
-          return FluentIterable.from(vals)
-              .transform(
-                  new Function<AnnotationValue, TypeMirror>() {
-                    @Override
-                    public TypeMirror apply(AnnotationValue typeValue) {
-                      return TO_TYPE.visit(typeValue);
-                    }
-                  })
-              .toList();
+        protected Void defaultAction(TypeMirror e, Void aVoid) {
+          report.addError(String.format("%s is not a valid %s type", e, typeName));
+          return null;
         }
 
         @Override
-        protected ImmutableList<TypeMirror> defaultAction(Object o, String elementName) {
-          throw new IllegalArgumentException(elementName + " is not an array: " + o);
+        public Void visitDeclared(DeclaredType t, Void aVoid) {
+          // Declared types are valid
+          return null;
         }
-      };
-
-  private static final AnnotationValueVisitor<TypeMirror, Void> TO_TYPE =
-      new SimpleAnnotationValueVisitor6<TypeMirror, Void>() {
-        @Override
-        public TypeMirror visitType(TypeMirror t, Void p) {
-          return t;
-        }
-
-        @Override
-        protected TypeMirror defaultAction(Object o, Void p) {
-          throw new TypeNotPresentException(o.toString(), null);
-        }
-      };
+      }, null);
+    }
+  }
 
   /**
    * Returns the full set of modules transitively {@linkplain Module#includes included} from the
@@ -161,8 +212,7 @@ final class ConfigurationAnnotations {
     for (TypeElement moduleElement = moduleQueue.poll();
         moduleElement != null;
         moduleElement = moduleQueue.poll()) {
-      Optional<AnnotationMirror> moduleMirror = getAnnotationMirror(moduleElement, Module.class)
-          .or(getAnnotationMirror(moduleElement, ProducerModule.class));
+      Optional<AnnotationMirror> moduleMirror = getModuleAnnotation(moduleElement);
       if (moduleMirror.isPresent()) {
         ImmutableSet.Builder<TypeElement> moduleDependenciesBuilder = ImmutableSet.builder();
         moduleDependenciesBuilder.addAll(
@@ -187,7 +237,7 @@ final class ConfigurationAnnotations {
   static ImmutableList<DeclaredType> enclosedBuilders(TypeElement typeElement,
       final Class<? extends Annotation> annotation) {
     final ImmutableList.Builder<DeclaredType> builders = ImmutableList.builder();
-    for (TypeElement element : ElementFilter.typesIn(typeElement.getEnclosedElements())) {
+    for (TypeElement element : typesIn(typeElement.getEnclosedElements())) {
       if (MoreElements.isAnnotationPresent(element, annotation)) {
         builders.add(MoreTypes.asDeclared(element.asType()));
       }
@@ -203,11 +253,11 @@ final class ConfigurationAnnotations {
     while (!types.isSameType(objectType, superclass)
         && superclass.getKind().equals(TypeKind.DECLARED)) {
       element = MoreElements.asType(types.asElement(superclass));
-      Optional<AnnotationMirror> moduleMirror = getAnnotationMirror(element, Module.class)
-          .or(getAnnotationMirror(element, ProducerModule.class));
-      if (moduleMirror.isPresent()) {
-        builder.addAll(MoreTypes.asTypeElements(getModuleIncludes(moduleMirror.get())));
-      }
+      getModuleAnnotation(element)
+          .ifPresent(
+              moduleMirror -> {
+                builder.addAll(MoreTypes.asTypeElements(getModuleIncludes(moduleMirror)));
+              });
       superclass = element.getSuperclass();
     }
   }

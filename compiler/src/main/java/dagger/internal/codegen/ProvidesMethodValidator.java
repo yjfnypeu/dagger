@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Google, Inc.
+ * Copyright (C) 2014 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,18 +13,22 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.internal.codegen;
 
+import static dagger.internal.codegen.BindingMethodValidator.Abstractness.MUST_BE_CONCRETE;
+import static dagger.internal.codegen.BindingMethodValidator.AllowsMultibindings.ALLOWS_MULTIBINDINGS;
+import static dagger.internal.codegen.BindingMethodValidator.ExceptionSuperclass.RUNTIME_EXCEPTION;
+import static dagger.internal.codegen.ErrorMessages.provisionMayNotDependOnProducerType;
+
+import com.google.common.collect.ImmutableSet;
 import dagger.Module;
 import dagger.Provides;
+import dagger.producers.ProducerModule;
 import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.VariableElement;
 import javax.lang.model.util.Elements;
 import javax.lang.model.util.Types;
-
-import static dagger.internal.codegen.BindingMethodValidator.Abstractness.MUST_BE_CONCRETE;
-import static dagger.internal.codegen.BindingMethodValidator.ExceptionSuperclass.RUNTIME_EXCEPTION;
-import static dagger.internal.codegen.ErrorMessages.provisionMayNotDependOnProducerType;
 
 /**
  * A validator for {@link Provides} methods.
@@ -35,7 +39,14 @@ import static dagger.internal.codegen.ErrorMessages.provisionMayNotDependOnProdu
 final class ProvidesMethodValidator extends BindingMethodValidator {
 
   ProvidesMethodValidator(Elements elements, Types types) {
-    super(elements, types, Provides.class, Module.class, MUST_BE_CONCRETE, RUNTIME_EXCEPTION);
+    super(
+        elements,
+        types,
+        Provides.class,
+        ImmutableSet.of(Module.class, ProducerModule.class),
+        MUST_BE_CONCRETE,
+        RUNTIME_EXCEPTION,
+        ALLOWS_MULTIBINDINGS);
   }
 
   @Override

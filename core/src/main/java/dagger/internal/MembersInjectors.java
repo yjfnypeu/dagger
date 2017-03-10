@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Google Inc.
+ * Copyright (C) 2014 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,12 +13,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.internal;
+
+import static dagger.internal.Preconditions.checkNotNull;
 
 import dagger.MembersInjector;
 import javax.inject.Inject;
-
-import static dagger.internal.Preconditions.checkNotNull;
 
 /**
  * Basic {@link MembersInjector} implementations used by the framework.

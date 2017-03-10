@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 Google, Inc.
+ * Copyright (C) 2015 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.internal.codegen;
+
+import static com.google.common.truth.Truth.assertAbout;
+import static com.google.testing.compile.JavaSourcesSubjectFactory.javaSources;
+import static dagger.internal.codegen.GeneratedLines.GENERATED_ANNOTATION;
 
 import com.google.common.collect.ImmutableList;
 import com.google.testing.compile.JavaFileObjects;
@@ -21,10 +26,6 @@ import javax.tools.JavaFileObject;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
-
-import static com.google.common.truth.Truth.assertAbout;
-import static com.google.testing.compile.JavaSourcesSubjectFactory.javaSources;
-import static dagger.internal.codegen.GeneratedLines.GENERATED_ANNOTATION;
 
 @RunWith(JUnit4.class)
 public class InaccessibleTypeTest {
@@ -66,7 +67,6 @@ public class InaccessibleTypeTest {
         "package test;",
         "",
         "import dagger.Component;",
-        "",
         "import foreign.PublicClass;",
         "import javax.inject.Provider;",
         "",
@@ -74,76 +74,88 @@ public class InaccessibleTypeTest {
         "interface TestComponent {",
         "  PublicClass publicClass();",
         "}");
-    JavaFileObject generatedComponent = JavaFileObjects.forSourceLines(
-        "test.DaggerTestComponent",
-        "package test;",
-        "",
-        "import foreign.NoDepClass_Factory;",
-        "import foreign.NonPublicClass1_Factory;",
-        "import foreign.NonPublicClass2_Factory;",
-        "import foreign.PublicClass;",
-        "import foreign.PublicClass_Factory;",
-        "import javax.annotation.Generated;",
-        "import javax.inject.Provider;",
-        "",
-        GENERATED_ANNOTATION,
-        "public final class DaggerTestComponent implements TestComponent {",
-        "  @SuppressWarnings(\"rawtypes\")",
-        "  private Provider nonPublicClass1Provider;",
-        "  @SuppressWarnings(\"rawtypes\")",
-        "  private Provider nonPublicClass2Provider;",
-        "  private Provider<PublicClass> publicClassProvider;",
-        "",
-        "  private DaggerTestComponent(Builder builder) {",
-        "    assert builder != null;",
-        "    initialize(builder);",
-        "  }",
-        "",
-        "  public static Builder builder() {",
-        "    return new Builder();",
-        "  }",
-        "",
-        "  public static TestComponent create() {",
-        "    return builder().build();",
-        "  }",
-        "",
-        "  @SuppressWarnings(\"unchecked\")",
-        "  private void initialize(final Builder builder) {",
-        "    this.nonPublicClass1Provider =",
-        "        NonPublicClass1_Factory.create(NoDepClass_Factory.create());",
-        "    this.nonPublicClass2Provider =",
-        "        NonPublicClass2_Factory.create(NoDepClass_Factory.create());",
-        "    this.publicClassProvider = PublicClass_Factory.create(",
-        "        nonPublicClass1Provider,",
-        "        nonPublicClass2Provider,",
-        "        NoDepClass_Factory.create());",
-        "  }",
-        "",
-        "  @Override",
-        "  public PublicClass publicClass() {",
-        "    return publicClassProvider.get();",
-        "  }",
-        "",
-        "  public static final class Builder {",
-        "    private Builder() {",
-        "    }",
-        "",
-        "    public TestComponent build() {",
-        "      return new DaggerTestComponent(this);",
-        "    }",
-        "  }",
-        "}");
+    JavaFileObject generatedComponent =
+        JavaFileObjects.forSourceLines(
+            "test.DaggerTestComponent",
+            "package test;",
+            "",
+            "import foreign.NoDepClass_Factory;",
+            "import foreign.NonPublicClass1_Factory;",
+            "import foreign.NonPublicClass2_Factory;",
+            "import foreign.PublicClass;",
+            "import foreign.PublicClass_Factory;",
+            "import javax.annotation.Generated;",
+            "import javax.inject.Provider;",
+            "",
+            GENERATED_ANNOTATION,
+            "public final class DaggerTestComponent implements TestComponent {",
+            "  @SuppressWarnings(\"rawtypes\")",
+            "  private Provider nonPublicClass1Provider;",
+            "  @SuppressWarnings(\"rawtypes\")",
+            "  private Provider nonPublicClass2Provider;",
+            "  private Provider<PublicClass> publicClassProvider;",
+            "",
+            "  private DaggerTestComponent(Builder builder) {",
+            "    assert builder != null;",
+            "    initialize(builder);",
+            "  }",
+            "",
+            "  public static Builder builder() {",
+            "    return new Builder();",
+            "  }",
+            "",
+            "  public static TestComponent create() {",
+            "    return new Builder().build();",
+            "  }",
+            "",
+            "  @SuppressWarnings(\"unchecked\")",
+            "  private void initialize(final Builder builder) {",
+            "    this.nonPublicClass1Provider =",
+            "        NonPublicClass1_Factory.create(NoDepClass_Factory.create());",
+            "    this.nonPublicClass2Provider =",
+            "        NonPublicClass2_Factory.create(NoDepClass_Factory.create());",
+            "    this.publicClassProvider = PublicClass_Factory.create(",
+            "        nonPublicClass1Provider,",
+            "        nonPublicClass2Provider,",
+            "        NoDepClass_Factory.create());",
+            "  }",
+            "",
+            "  @Override",
+            "  public PublicClass publicClass() {",
+            "    return PublicClass_Factory.newPublicClass(",
+            "        NonPublicClass1_Factory.newNonPublicClass1(",
+            "            NoDepClass_Factory.newNoDepClass()),",
+            "        NonPublicClass2_Factory.newNonPublicClass2(",
+            "            NoDepClass_Factory.newNoDepClass()),",
+            "        NoDepClass_Factory.newNoDepClass());",
+            "  }",
+            "",
+            "  public static final class Builder {",
+            "    private Builder() {",
+            "    }",
+            "",
+            "    public TestComponent build() {",
+            "      return new DaggerTestComponent(this);",
+            "    }",
+            "  }",
+            "}");
     assertAbout(javaSources())
-        .that(ImmutableList.of(
-            noDepClassFile,
-            publicClassFile,
-            nonPublicClass1File,
-            nonPublicClass2File,
-            componentFile))
-        .withCompilerOptions("-Xlint:-processing", "-Xlint:rawtypes", "-Xlint:unchecked", "-Werror")
+        .that(
+            ImmutableList.of(
+                noDepClassFile,
+                publicClassFile,
+                nonPublicClass1File,
+                nonPublicClass2File,
+                componentFile))
+        .withCompilerOptions(
+            "-Xlint:-processing",
+            "-Xlint:rawtypes",
+            "-Xlint:unchecked",
+            "-Werror")
         .processedWith(new ComponentProcessor())
         .compilesWithoutError()
-        .and().generatesSources(generatedComponent);
+        .and()
+        .generatesSources(generatedComponent);
   }
 
   @Test public void memberInjectedType() {
@@ -196,7 +208,6 @@ public class InaccessibleTypeTest {
         "package test;",
         "",
         "import dagger.Component;",
-        "",
         "import javax.inject.Provider;",
         "",
         "@Component",
@@ -225,7 +236,7 @@ public class InaccessibleTypeTest {
             "  }",
             "",
             "  public static TestComponent create() {",
-            "    return builder().build();",
+            "    return new Builder().build();",
             "  }",
             "",
             "  @SuppressWarnings(\"unchecked\")",
@@ -248,16 +259,17 @@ public class InaccessibleTypeTest {
             "  }",
             "}");
     assertAbout(javaSources())
-        .that(ImmutableList.of(
-            noDepClassFile,
-            aClassFile,
-            bClassFile,
-            cClassFile,
-            dClassFile,
-            componentFile))
-        .withCompilerOptions("-Xlint:-processing", "-Xlint:rawtypes", "-Xlint:unchecked", "-Werror")
+        .that(
+            ImmutableList.of(
+                noDepClassFile, aClassFile, bClassFile, cClassFile, dClassFile, componentFile))
+        .withCompilerOptions(
+            "-Xlint:-processing",
+            "-Xlint:rawtypes",
+            "-Xlint:unchecked",
+            "-Werror")
         .processedWith(new ComponentProcessor())
         .compilesWithoutError()
-        .and().generatesSources(generatedComponent);
+        .and()
+        .generatesSources(generatedComponent);
   }
 }

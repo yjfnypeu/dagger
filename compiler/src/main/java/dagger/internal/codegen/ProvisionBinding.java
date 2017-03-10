@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Google, Inc.
+ * Copyright (C) 2014 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,27 +13,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package dagger.internal.codegen;
 
-import com.google.auto.common.MoreElements;
-import com.google.auto.common.MoreTypes;
-import com.google.auto.value.AutoValue;
-import com.google.common.base.Equivalence;
-import com.google.common.base.Optional;
-import com.google.common.collect.ImmutableSet;
-import com.google.common.collect.Sets;
-import javax.inject.Inject;
-import javax.inject.Provider;
-import javax.lang.model.element.AnnotationMirror;
-import javax.lang.model.element.Element;
-import javax.lang.model.element.ElementKind;
-import javax.lang.model.element.ExecutableElement;
-import javax.lang.model.element.TypeElement;
-import javax.lang.model.type.DeclaredType;
-import javax.lang.model.type.ExecutableType;
-import javax.lang.model.type.TypeMirror;
-import javax.lang.model.util.Elements;
-import javax.lang.model.util.Types;
+package dagger.internal.codegen;
 
 import static com.google.auto.common.MoreElements.isAnnotationPresent;
 import static com.google.auto.common.MoreTypes.asDeclared;
@@ -47,6 +28,29 @@ import static javax.lang.model.element.ElementKind.CONSTRUCTOR;
 import static javax.lang.model.element.ElementKind.FIELD;
 import static javax.lang.model.element.ElementKind.METHOD;
 
+import com.google.auto.common.MoreElements;
+import com.google.auto.common.MoreTypes;
+import com.google.auto.value.AutoValue;
+import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Iterables;
+import com.google.common.collect.Sets;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
+import dagger.internal.codegen.ComponentDescriptor.BuilderRequirementMethod;
+import java.util.Optional;
+import javax.annotation.CheckReturnValue;
+import javax.inject.Inject;
+import javax.inject.Provider;
+import javax.lang.model.element.Element;
+import javax.lang.model.element.ElementKind;
+import javax.lang.model.element.ExecutableElement;
+import javax.lang.model.element.TypeElement;
+import javax.lang.model.element.VariableElement;
+import javax.lang.model.type.DeclaredType;
+import javax.lang.model.type.ExecutableType;
+import javax.lang.model.type.TypeMirror;
+import javax.lang.model.util.Elements;
+import javax.lang.model.util.Types;
+
 /**
  * A value object representing the mechanism by which a {@link Key} can be provided. New instances
  * should be created using an instance of the {@link Factory}.
@@ -58,6 +62,16 @@ import static javax.lang.model.element.ElementKind.METHOD;
 abstract class ProvisionBinding extends ContributionBinding {
 
   @Override
+  ImmutableSet<DependencyRequest> implicitDependencies() {
+    return membersInjectionRequest().isPresent()
+        ? ImmutableSet.of(membersInjectionRequest().get())
+        : ImmutableSet.of();
+  }
+
+  /** If this provision requires members injection, this will be the corresponding request. */
+  abstract Optional<DependencyRequest> membersInjectionRequest();
+
+  @Override
   public BindingType bindingType() {
     return BindingType.PROVISION;
   }
@@ -67,6 +81,27 @@ abstract class ProvisionBinding extends ContributionBinding {
 
   @Override
   abstract Optional<Scope> scope();
+
+  private static Builder builder() {
+    return new AutoValue_ProvisionBinding.Builder()
+        .explicitDependencies(ImmutableSet.<DependencyRequest>of());
+  }
+  
+  abstract Builder toBuilder();
+
+  @AutoValue.Builder
+  @CanIgnoreReturnValue
+  abstract static class Builder extends ContributionBinding.Builder<Builder> {
+
+    abstract Builder membersInjectionRequest(Optional<DependencyRequest> membersInjectionRequest);
+
+    abstract Builder unresolved(ProvisionBinding unresolved);
+
+    abstract Builder scope(Optional<Scope> scope);
+
+    @CheckReturnValue
+    abstract ProvisionBinding build();
+  }
 
   static final class Factory {
     private final Elements elements;
@@ -84,11 +119,11 @@ abstract class ProvisionBinding extends ContributionBinding {
 
     /**
      * Returns a ProvisionBinding for the given element. If {@code resolvedType} is present, this
-     * will return a resolved binding, with the key & type resolved to the given type (using
+     * will return a resolved binding, with the key and type resolved to the given type (using
      * {@link Types#asMemberOf(DeclaredType, Element)}).
      */
-    ProvisionBinding forInjectConstructor(ExecutableElement constructorElement,
-        Optional<TypeMirror> resolvedType) {
+    ProvisionBinding forInjectConstructor(
+        ExecutableElement constructorElement, Optional<TypeMirror> resolvedType) {
       checkNotNull(constructorElement);
       checkArgument(constructorElement.getKind().equals(CONSTRUCTOR));
       checkArgument(isAnnotationPresent(constructorElement, Inject.class));
@@ -115,25 +150,23 @@ abstract class ProvisionBinding extends ContributionBinding {
               constructorElement.getParameters(), cxtorType.getParameterTypes());
       Optional<DependencyRequest> membersInjectionRequest =
           membersInjectionRequest(enclosingCxtorType);
-      Optional<Scope> scope = Scope.uniqueScopeOf(constructorElement.getEnclosingElement());
+
+      ProvisionBinding.Builder builder =
+          ProvisionBinding.builder()
+              .contributionType(ContributionType.UNIQUE)
+              .bindingElement(constructorElement)
+              .key(key)
+              .explicitDependencies(dependencies)
+              .membersInjectionRequest(membersInjectionRequest)
+              .bindingKind(Kind.INJECTION)
+              .scope(Scope.uniqueScopeOf(constructorElement.getEnclosingElement()));
 
       TypeElement bindingTypeElement =
           MoreElements.asType(constructorElement.getEnclosingElement());
-
-      return new AutoValue_ProvisionBinding(
-          ContributionType.UNIQUE,
-          constructorElement,
-          Optional.<TypeElement>absent(),
-          key,
-          dependencies,
-          Optional.<DeclaredType>absent(),
-          membersInjectionRequest,
-          Optional.<Equivalence.Wrapper<AnnotationMirror>>absent(),
-          Kind.INJECTION,
-          hasNonDefaultTypeParameters(bindingTypeElement, key.type(), types)
-              ? Optional.of(forInjectConstructor(constructorElement, Optional.<TypeMirror>absent()))
-              : Optional.<ProvisionBinding>absent(),
-          scope);
+      if (hasNonDefaultTypeParameters(bindingTypeElement, key.type(), types)) {
+        builder.unresolved(forInjectConstructor(constructorElement, Optional.empty()));
+      }
+      return builder.build();
     }
 
     private static final ImmutableSet<ElementKind> MEMBER_KINDS =
@@ -151,7 +184,7 @@ abstract class ProvisionBinding extends ContributionBinding {
           return Optional.of(dependencyRequestFactory.forMembersInjectedType(type));
         }
       }
-      return Optional.absent();
+      return Optional.empty();
     }
 
     ProvisionBinding forProvidesMethod(
@@ -165,104 +198,89 @@ abstract class ProvisionBinding extends ContributionBinding {
           dependencyRequestFactory.forRequiredResolvedVariables(
               providesMethod.getParameters(),
               resolvedMethod.getParameterTypes());
-      Optional<Scope> scope = Scope.uniqueScopeOf(providesMethod);
-      return new AutoValue_ProvisionBinding(
-          ContributionType.fromBindingMethod(providesMethod),
-          providesMethod,
-          Optional.of(contributedBy),
-          key,
-          dependencies,
-          ConfigurationAnnotations.getNullableType(providesMethod),
-          Optional.<DependencyRequest>absent(),
-          wrapOptionalInEquivalence(getMapKey(providesMethod)),
-          Kind.PROVISION,
-          Optional.<ProvisionBinding>absent(),
-          scope);
+      return ProvisionBinding.builder()
+          .contributionType(ContributionType.fromBindingMethod(providesMethod))
+          .bindingElement(providesMethod)
+          .contributingModule(contributedBy)
+          .key(key)
+          .explicitDependencies(dependencies)
+          .nullableType(ConfigurationAnnotations.getNullableType(providesMethod))
+          .wrappedMapKey(wrapOptionalInEquivalence(getMapKey(providesMethod)))
+          .bindingKind(Kind.PROVISION)
+          .scope(Scope.uniqueScopeOf(providesMethod))
+          .build();
     }
 
-    /**
-     * A synthetic binding of {@code Map<K, V>} that depends on {@code Map<K, Provider<V>>}.
-     */
-    ProvisionBinding syntheticMapOfValuesBinding(DependencyRequest requestForMapOfValues) {
-      checkNotNull(requestForMapOfValues);
-      Optional<Key> mapOfProvidersKey =
-          keyFactory.implicitMapProviderKeyFrom(requestForMapOfValues.key());
-      checkArgument(
-          mapOfProvidersKey.isPresent(),
-          "%s is not a request for Map<K, V>",
-          requestForMapOfValues);
+    /** A synthetic binding of {@code Map<K, V>} that depends on {@code Map<K, Provider<V>>}. */
+    ProvisionBinding syntheticMapOfValuesBinding(Key mapOfValuesKey) {
+      checkNotNull(mapOfValuesKey);
+      Optional<Key> mapOfProvidersKey = keyFactory.implicitMapProviderKeyFrom(mapOfValuesKey);
+      checkArgument(mapOfProvidersKey.isPresent(), "%s is not a key for Map<K, V>", mapOfValuesKey);
       DependencyRequest requestForMapOfProviders =
-          dependencyRequestFactory.forImplicitMapBinding(
-              requestForMapOfValues, mapOfProvidersKey.get());
-      return new AutoValue_ProvisionBinding(
-          ContributionType.UNIQUE,
-          requestForMapOfProviders.requestElement(),
-          Optional.<TypeElement>absent(),
-          requestForMapOfValues.key(),
-          ImmutableSet.of(requestForMapOfProviders),
-          Optional.<DeclaredType>absent(),
-          Optional.<DependencyRequest>absent(),
-          wrapOptionalInEquivalence(getMapKey(requestForMapOfProviders.requestElement())),
-          Kind.SYNTHETIC_MAP,
-          Optional.<ProvisionBinding>absent(),
-          Scope.uniqueScopeOf(requestForMapOfProviders.requestElement()));
+          dependencyRequestFactory.providerForImplicitMapBinding(mapOfProvidersKey.get());
+      return ProvisionBinding.builder()
+          .contributionType(ContributionType.UNIQUE)
+          .key(mapOfValuesKey)
+          .explicitDependencies(requestForMapOfProviders)
+          .bindingKind(Kind.SYNTHETIC_MAP)
+          .build();
     }
 
     /**
      * A synthetic binding that depends explicitly on a set of individual provision multibinding
      * contribution methods.
-     * 
+     *
      * <p>Note that these could be set multibindings or map multibindings.
      */
     ProvisionBinding syntheticMultibinding(
-        DependencyRequest request, Iterable<ContributionBinding> multibindingContributions) {
-      return new AutoValue_ProvisionBinding(
-          ContributionType.UNIQUE,
-          request.requestElement(),
-          Optional.<TypeElement>absent(),
-          request.key(),
-          dependencyRequestFactory.forMultibindingContributions(request, multibindingContributions),
-          Optional.<DeclaredType>absent(),
-          Optional.<DependencyRequest>absent(),
-          Optional.<Equivalence.Wrapper<AnnotationMirror>>absent(),
-          Kind.forMultibindingRequest(request),
-          Optional.<ProvisionBinding>absent(),
-          Scope.uniqueScopeOf(request.requestElement()));
+        Key key, Iterable<ContributionBinding> multibindingContributions) {
+      return ProvisionBinding.builder()
+          .contributionType(ContributionType.UNIQUE)
+          .key(key)
+          .explicitDependencies(
+              dependencyRequestFactory.forMultibindingContributions(multibindingContributions))
+          .bindingKind(Kind.forMultibindingKey(key))
+          .build();
     }
 
     ProvisionBinding forComponent(TypeElement componentDefinitionType) {
       checkNotNull(componentDefinitionType);
-      return new AutoValue_ProvisionBinding(
-          ContributionType.UNIQUE,
-          componentDefinitionType,
-          Optional.<TypeElement>absent(),
-          keyFactory.forComponent(componentDefinitionType.asType()),
-          ImmutableSet.<DependencyRequest>of(),
-          Optional.<DeclaredType>absent(),
-          Optional.<DependencyRequest>absent(),
-          Optional.<Equivalence.Wrapper<AnnotationMirror>>absent(),
-          Kind.COMPONENT,
-          Optional.<ProvisionBinding>absent(),
-          Optional.<Scope>absent());
+      return ProvisionBinding.builder()
+          .contributionType(ContributionType.UNIQUE)
+          .bindingElement(componentDefinitionType)
+          .key(keyFactory.forComponent(componentDefinitionType.asType()))
+          .bindingKind(Kind.COMPONENT)
+          .build();
     }
 
     ProvisionBinding forComponentMethod(ExecutableElement componentMethod) {
       checkNotNull(componentMethod);
       checkArgument(componentMethod.getKind().equals(METHOD));
       checkArgument(componentMethod.getParameters().isEmpty());
-      Optional<Scope> scope = Scope.uniqueScopeOf(componentMethod);
-      return new AutoValue_ProvisionBinding(
-          ContributionType.UNIQUE,
-          componentMethod,
-          Optional.<TypeElement>absent(),
-          keyFactory.forComponentMethod(componentMethod),
-          ImmutableSet.<DependencyRequest>of(),
-          ConfigurationAnnotations.getNullableType(componentMethod),
-          Optional.<DependencyRequest>absent(),
-          Optional.<Equivalence.Wrapper<AnnotationMirror>>absent(),
-          Kind.COMPONENT_PROVISION,
-          Optional.<ProvisionBinding>absent(),
-          scope);
+      return ProvisionBinding.builder()
+          .contributionType(ContributionType.UNIQUE)
+          .bindingElement(componentMethod)
+          .key(keyFactory.forComponentMethod(componentMethod))
+          .nullableType(ConfigurationAnnotations.getNullableType(componentMethod))
+          .bindingKind(Kind.COMPONENT_PROVISION)
+          .scope(Scope.uniqueScopeOf(componentMethod))
+          .build();
+    }
+
+    ProvisionBinding forBuilderBinding(BuilderRequirementMethod method) {
+      ExecutableElement builderMethod = method.method();
+
+      checkNotNull(builderMethod);
+      checkArgument(builderMethod.getKind().equals(METHOD));
+      checkArgument(builderMethod.getParameters().size() == 1);
+      VariableElement parameterElement = Iterables.getOnlyElement(builderMethod.getParameters());
+      return ProvisionBinding.builder()
+          .contributionType(ContributionType.UNIQUE)
+          .bindingElement(builderMethod)
+          .key(method.requirement().key().get())
+          .nullableType(ConfigurationAnnotations.getNullableType(parameterElement))
+          .bindingKind(Kind.BUILDER_BINDING)
+          .build();
     }
 
     ProvisionBinding forSubcomponentBuilderMethod(
@@ -271,35 +289,117 @@ abstract class ProvisionBinding extends ContributionBinding {
       checkArgument(subcomponentBuilderMethod.getKind().equals(METHOD));
       checkArgument(subcomponentBuilderMethod.getParameters().isEmpty());
       DeclaredType declaredContainer = asDeclared(contributedBy.asType());
-      return new AutoValue_ProvisionBinding(
-          ContributionType.UNIQUE,
-          subcomponentBuilderMethod,
-          Optional.<TypeElement>absent(),
-          keyFactory.forSubcomponentBuilderMethod(subcomponentBuilderMethod, declaredContainer),
-          ImmutableSet.<DependencyRequest>of(),
-          Optional.<DeclaredType>absent(),
-          Optional.<DependencyRequest>absent(),
-          Optional.<Equivalence.Wrapper<AnnotationMirror>>absent(),
-          Kind.SUBCOMPONENT_BUILDER,
-          Optional.<ProvisionBinding>absent(),
-          Optional.<Scope>absent());
+      return ProvisionBinding.builder()
+          .contributionType(ContributionType.UNIQUE)
+          .bindingElement(subcomponentBuilderMethod)
+          .key(
+              keyFactory.forSubcomponentBuilderMethod(subcomponentBuilderMethod, declaredContainer))
+          .bindingKind(Kind.SUBCOMPONENT_BUILDER)
+          .build();
+    }
+
+    ProvisionBinding syntheticSubcomponentBuilder(
+        ImmutableSet<SubcomponentDeclaration> subcomponentDeclarations) {
+      SubcomponentDeclaration subcomponentDeclaration = subcomponentDeclarations.iterator().next();
+      return ProvisionBinding.builder()
+          .contributionType(ContributionType.UNIQUE)
+          .key(subcomponentDeclaration.key())
+          .bindingKind(Kind.SUBCOMPONENT_BUILDER)
+          .build();
     }
 
     ProvisionBinding delegate(
         DelegateDeclaration delegateDeclaration, ProvisionBinding delegate) {
-      Key key = keyFactory.forDelegateBinding(delegateDeclaration, Provider.class);
-      return new AutoValue_ProvisionBinding(
-          delegateDeclaration.contributionType(),
-          delegateDeclaration.bindingElement(),
-          delegateDeclaration.contributingModule(),
-          key,
-          ImmutableSet.of(delegateDeclaration.delegateRequest()),
-          delegate.nullableType(),
-          Optional.<DependencyRequest>absent(),
-          delegateDeclaration.wrappedMapKey(),
-          Kind.SYNTHETIC_DELEGATE_BINDING,
-          Optional.<ProvisionBinding>absent(),
-          Scope.uniqueScopeOf(delegateDeclaration.bindingElement()));
+      return delegateBuilder(delegateDeclaration).nullableType(delegate.nullableType()).build();
+    }
+
+    /**
+     * A form of {@link #delegate(DelegateDeclaration, ProvisionBinding)} when the right-hand-side
+     * of a {@link dagger.Binds} method cannot be resolved.
+     */
+    ProvisionBinding missingDelegate(DelegateDeclaration delegateDeclaration) {
+      return delegateBuilder(delegateDeclaration).build();
+    }
+
+    private ProvisionBinding.Builder delegateBuilder(DelegateDeclaration delegateDeclaration) {
+      return ProvisionBinding.builder()
+          .contributionType(delegateDeclaration.contributionType())
+          .bindingElement(delegateDeclaration.bindingElement().get())
+          .contributingModule(delegateDeclaration.contributingModule().get())
+          .key(keyFactory.forDelegateBinding(delegateDeclaration, Provider.class))
+          .explicitDependencies(delegateDeclaration.delegateRequest())
+          .wrappedMapKey(delegateDeclaration.wrappedMapKey())
+          .bindingKind(Kind.SYNTHETIC_DELEGATE_BINDING)
+          .scope(Scope.uniqueScopeOf(delegateDeclaration.bindingElement().get()));
+    }
+
+    /**
+     * Returns a synthetic binding for a {@code @ForReleasableReferences(scope)
+     * ReleasableReferenceManager} that provides the component-instantiated object.
+     */
+    ProvisionBinding provideReleasableReferenceManager(Scope scope) {
+      return ProvisionBinding.builder()
+          .contributionType(ContributionType.UNIQUE)
+          .key(keyFactory.forReleasableReferenceManager(scope))
+          .bindingKind(Kind.SYNTHETIC_RELEASABLE_REFERENCE_MANAGER)
+          .build();
+    }
+
+    /**
+     * Returns a synthetic binding for a {@code @ForReleasableReferences(scope)
+     * TypedReleasableReferenceManager<metadataType>} that provides the component-instantiated
+     * object.
+     */
+    ContributionBinding provideTypedReleasableReferenceManager(
+        Scope scope, DeclaredType metadataType) {
+      return provideReleasableReferenceManager(scope)
+          .toBuilder()
+          .key(keyFactory.forTypedReleasableReferenceManager(scope, metadataType))
+          .build();
+    }
+
+    /** Returns a synthetic binding for {@code Set<ReleasableReferenceManager>}. */
+    ProvisionBinding provideSetOfReleasableReferenceManagers() {
+      return ProvisionBinding.builder()
+          .contributionType(ContributionType.UNIQUE)
+          .key(keyFactory.forSetOfReleasableReferenceManagers())
+          .bindingKind(Kind.SYNTHETIC_RELEASABLE_REFERENCE_MANAGERS)
+          .build();
+    }
+
+    /**
+     * Returns a synthetic binding for {@code Set<TypedReleasableReferenceManager<metadataType>}.
+     */
+    ContributionBinding provideSetOfTypedReleasableReferenceManagers(DeclaredType metadataType) {
+      return provideSetOfReleasableReferenceManagers()
+          .toBuilder()
+          .key(keyFactory.forSetOfTypedReleasableReferenceManagers(metadataType))
+          .build();
+    }
+
+    /**
+     * Returns a synthetic binding for an {@linkplain dagger.BindsOptionalOf optional binding} in a
+     * component with no binding for the underlying key.
+     */
+    ProvisionBinding syntheticAbsentBinding(Key key) {
+      return ProvisionBinding.builder()
+          .contributionType(ContributionType.UNIQUE)
+          .key(key)
+          .bindingKind(Kind.SYNTHETIC_OPTIONAL_BINDING)
+          .build();
+    }
+
+    /**
+     * Returns a synthetic binding for an {@linkplain dagger.BindsOptionalOf optional binding} in a
+     * component with a binding for the underlying key.
+     */
+    ProvisionBinding syntheticPresentBinding(Key key) {
+      return syntheticAbsentBinding(key)
+          .toBuilder()
+          .explicitDependencies(
+              dependencyRequestFactory.forSyntheticPresentOptionalBinding(
+                  key, DependencyRequest.Kind.PROVIDER))
+          .build();
     }
   }
 }

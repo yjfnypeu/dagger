@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Google Inc.
+ * Copyright (C) 2014 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.producers;
+
+import static java.lang.annotation.ElementType.TYPE;
 
 import com.google.common.util.concurrent.ListenableFuture;
 import dagger.Module;
@@ -24,12 +27,10 @@ import java.lang.annotation.Target;
 import javax.inject.Inject;
 import javax.inject.Qualifier;
 
-import static java.lang.annotation.ElementType.TYPE;
-
 /**
  * Annotates an interface or abstract class for which a fully-formed, dependency-injected
- * implementation is to be generated from a set of {@linkplain #modules}. The generated class will
- * have the name of the type annotated with {@code @ProductionComponent} prepended with
+ * implementation is to be generated from a set of {@linkplain #modules modules}. The generated
+ * class will have the name of the type annotated with {@code @ProductionComponent} prepended with
  * {@code Dagger}.  For example, {@code @ProductionComponent interface MyComponent {...}} will
  * produce an implementation named {@code DaggerMyComponent}.
  *

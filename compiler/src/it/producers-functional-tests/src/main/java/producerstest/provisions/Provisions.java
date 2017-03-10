@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Google, Inc.
+ * Copyright (C) 2016 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package producerstest.provisions;
 
 import com.google.common.util.concurrent.ListenableFuture;
@@ -21,9 +22,8 @@ import dagger.producers.ProducerModule;
 import dagger.producers.Produces;
 import dagger.producers.ProductionComponent;
 import javax.inject.Inject;
-import producerstest.ExecutorModule;
-
 import javax.inject.Qualifier;
+import producerstest.ExecutorModule;
 
 /** Tests for requesting provisions from producers. */
 final class Provisions {

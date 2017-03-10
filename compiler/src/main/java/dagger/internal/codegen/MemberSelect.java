@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 Google, Inc.
+ * Copyright (C) 2015 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,29 +13,26 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.internal.codegen;
 
-import com.google.common.collect.ImmutableList;
-import com.squareup.javapoet.ClassName;
-import com.squareup.javapoet.CodeBlock;
-import dagger.MembersInjector;
-import dagger.internal.MapProviderFactory;
-import dagger.producers.internal.MapOfProducerProducer;
-import java.util.List;
-import java.util.Set;
-import javax.lang.model.type.TypeMirror;
-
-import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static dagger.internal.codegen.Accessibility.isTypeAccessibleFrom;
-import static dagger.internal.codegen.CodeBlocks.makeParametersCodeBlock;
-import static dagger.internal.codegen.CodeBlocks.toCodeBlocks;
+import static dagger.internal.codegen.CodeBlocks.toTypeNamesCodeBlock;
 import static dagger.internal.codegen.TypeNames.FACTORY;
 import static dagger.internal.codegen.TypeNames.MAP_OF_PRODUCER_PRODUCER;
 import static dagger.internal.codegen.TypeNames.MAP_PROVIDER_FACTORY;
 import static dagger.internal.codegen.TypeNames.MEMBERS_INJECTOR;
 import static dagger.internal.codegen.TypeNames.MEMBERS_INJECTORS;
-import static dagger.internal.codegen.TypeNames.SET;
+
+import com.google.common.collect.ImmutableList;
+import com.squareup.javapoet.ClassName;
+import com.squareup.javapoet.CodeBlock;
+import com.squareup.javapoet.TypeName;
+import dagger.MembersInjector;
+import java.util.List;
+import java.util.Set;
+import javax.lang.model.type.TypeMirror;
 
 /**
  * Represents a {@link com.sun.source.tree.MemberSelectTree} as a {@link CodeBlock}.
@@ -83,10 +80,7 @@ abstract class MemberSelect {
   static MemberSelect parameterizedFactoryCreateMethod(
       ClassName owningClass, List<? extends TypeMirror> parameters) {
     return new ParameterizedStaticMethod(
-        owningClass,
-        ImmutableList.<TypeMirror>copyOf(parameters),
-        CodeBlock.of("create()"),
-        FACTORY);
+        owningClass, ImmutableList.copyOf(parameters), CodeBlock.of("create()"), FACTORY);
   }
 
   private static final class StaticMethod extends MemberSelect {
@@ -116,24 +110,31 @@ abstract class MemberSelect {
         MEMBERS_INJECTOR);
   }
 
-  /**
+   /**
    * A {@link MemberSelect} for an empty map of framework types.
    *
-   * @param frameworkMapFactoryClass either {@link MapProviderFactory}
-   *     or {@link MapOfProducerProducer}
+   * @param bindingType the type of the binding of the empty map
    */
   static MemberSelect emptyFrameworkMapFactory(
-      ClassName frameworkMapFactoryClass, TypeMirror keyType, TypeMirror unwrappedValueType) {
-    checkArgument(
-        frameworkMapFactoryClass.equals(MAP_PROVIDER_FACTORY)
-            || frameworkMapFactoryClass.equals(MAP_OF_PRODUCER_PRODUCER),
-        "frameworkMapFactoryClass must be MapProviderFactory or MapOfProducerProducer: %s",
-        frameworkMapFactoryClass);
+      BindingType bindingType, TypeMirror keyType, TypeMirror unwrappedValueType) {
+    final ClassName frameworkMapFactoryClass;
+    switch (bindingType) {
+      case PROVISION:
+        frameworkMapFactoryClass = MAP_PROVIDER_FACTORY;
+        break;
+      case PRODUCTION:
+        frameworkMapFactoryClass = MAP_OF_PRODUCER_PRODUCER;
+        break;
+      case MEMBERS_INJECTION:
+        throw new IllegalArgumentException();
+      default:
+        throw new AssertionError();
+    }
     return new ParameterizedStaticMethod(
         frameworkMapFactoryClass,
         ImmutableList.of(keyType, unwrappedValueType),
         CodeBlock.of("empty()"),
-        frameworkMapFactoryClass);
+        ClassName.get(bindingType.frameworkClass()));
   }
 
   /**
@@ -143,10 +144,7 @@ abstract class MemberSelect {
    */
   static MemberSelect emptySetProvider(ClassName setFactoryType, SetType setType) {
     return new ParameterizedStaticMethod(
-        setFactoryType,
-        ImmutableList.of(setType.elementType()),
-        CodeBlock.of("empty()"),
-        SET);
+        setFactoryType, ImmutableList.of(setType.elementType()), CodeBlock.of("empty()"), FACTORY);
   }
 
   private static final class ParameterizedStaticMethod extends MemberSelect {
@@ -176,7 +174,7 @@ abstract class MemberSelect {
         return CodeBlock.of(
             "$T.<$L>$L",
             owningClass(),
-            makeParametersCodeBlock(toCodeBlocks(typeParameters)),
+            typeParameters.stream().map(TypeName::get).collect(toTypeNamesCodeBlock()),
             methodCodeBlock);
       } else {
         return CodeBlock.of("(($T) $T.$L)", rawReturnType, owningClass(), methodCodeBlock);

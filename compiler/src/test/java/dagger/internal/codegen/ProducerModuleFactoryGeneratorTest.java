@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Google, Inc.
+ * Copyright (C) 2014 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,15 +15,6 @@
  */
 // TODO(beder): Merge the error-handling tests with the ModuleFactoryGeneratorTest.
 package dagger.internal.codegen;
-
-import com.google.common.collect.ImmutableList;
-import com.google.common.util.concurrent.ListenableFuture;
-import com.google.testing.compile.JavaFileObjects;
-import javax.inject.Qualifier;
-import javax.tools.JavaFileObject;
-import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.JUnit4;
 
 import static com.google.common.truth.Truth.assertAbout;
 import static com.google.testing.compile.JavaSourceSubjectFactory.javaSource;
@@ -45,9 +36,18 @@ import static dagger.internal.codegen.ErrorMessages.PRODUCES_METHOD_SCOPE;
 import static dagger.internal.codegen.ErrorMessages.PRODUCES_METHOD_SET_VALUES_RETURN_SET;
 import static dagger.internal.codegen.GeneratedLines.GENERATED_ANNOTATION;
 
+import com.google.common.collect.ImmutableList;
+import com.google.common.util.concurrent.ListenableFuture;
+import com.google.testing.compile.JavaFileObjects;
+import javax.inject.Qualifier;
+import javax.tools.JavaFileObject;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.JUnit4;
+
 @RunWith(JUnit4.class)
 public class ProducerModuleFactoryGeneratorTest {
-  
+
   private String formatErrorMessage(String msg) {
     return String.format(msg, "Produces");
   }
@@ -366,7 +366,8 @@ public class ProducerModuleFactoryGeneratorTest {
             "",
             GENERATED_ANNOTATION,
             "public final class TestModule_ProduceStringFactory",
-            "    extends AbstractProducer<String> implements AsyncFunction<Void, String> {",
+            "    extends AbstractProducer<String>",
+            "    implements AsyncFunction<Void, String>, Executor {",
             "  private final TestModule module;",
             "  private final Provider<Executor> executorProvider;",
             "  private final Provider<ProductionComponentMonitor> monitorProvider;",
@@ -388,7 +389,7 @@ public class ProducerModuleFactoryGeneratorTest {
             "",
             "  @Override protected ListenableFuture<String> compute() {",
             "    return Futures.transformAsync(",
-            "        Futures.<Void>immediateFuture(null), this, executorProvider.get());",
+            "        Futures.<Void>immediateFuture(null), this, this);",
             "  }",
             "",
             "  @Deprecated",
@@ -402,6 +403,15 @@ public class ProducerModuleFactoryGeneratorTest {
             "    } finally {",
             "      monitor.methodFinished();",
             "    }",
+            "  }",
+            "",
+            "  @Deprecated",
+            "  @Override public void execute(Runnable runnable) {",
+            "    assert monitor != null :",
+            "        \"execute() may only be called internally from compute(); \"",
+            "        + \"if it's called explicitly, the monitor might be null\";",
+            "    monitor.ready();",
+            "    executorProvider.get().execute(runnable);",
             "  }",
             "}");
     assertAbout(javaSource())
@@ -447,7 +457,8 @@ public class ProducerModuleFactoryGeneratorTest {
             "",
             GENERATED_ANNOTATION,
             "public final class TestModule_ProduceStringFactory",
-            "    extends AbstractProducer<String> implements AsyncFunction<Void, String> {",
+            "    extends AbstractProducer<String>",
+            "    implements AsyncFunction<Void, String>, Executor {",
             "  private final TestModule module;",
             "  private final Provider<Executor> executorProvider;",
             "  private final Provider<ProductionComponentMonitor> monitorProvider;",
@@ -469,7 +480,7 @@ public class ProducerModuleFactoryGeneratorTest {
             "",
             "  @Override protected ListenableFuture<String> compute() {",
             "    return Futures.transformAsync(",
-            "      Futures.<Void>immediateFuture(null), this, executorProvider.get());",
+            "      Futures.<Void>immediateFuture(null), this, this);",
             "  }",
             "",
             "  @Deprecated",
@@ -483,6 +494,15 @@ public class ProducerModuleFactoryGeneratorTest {
             "    } finally {",
             "      monitor.methodFinished();",
             "    }",
+            "  }",
+            "",
+            "  @Deprecated",
+            "  @Override public void execute(Runnable runnable) {",
+            "    assert monitor != null :",
+            "        \"execute() may only be called internally from compute(); \"",
+            "        + \"if it's called explicitly, the monitor might be null\";",
+            "    monitor.ready();",
+            "    executorProvider.get().execute(runnable);",
             "  }",
             "}");
     assertAbout(javaSource())

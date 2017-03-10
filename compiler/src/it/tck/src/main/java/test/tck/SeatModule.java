@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 Google, Inc.
+ * Copyright (C) 2015 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,19 +13,18 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package test.tck;
 
+import dagger.Binds;
 import dagger.Module;
-import dagger.Provides;
 import org.atinject.tck.auto.Drivers;
 import org.atinject.tck.auto.DriversSeat;
 import org.atinject.tck.auto.Seat;
 
 @Module
-class SeatModule {
-  @Provides
+abstract class SeatModule {
+  @Binds
   @Drivers
-  static Seat provideSeat(DriversSeat seat) {
-    return seat;
-  }
+  abstract Seat provideSeat(DriversSeat seat);
 }

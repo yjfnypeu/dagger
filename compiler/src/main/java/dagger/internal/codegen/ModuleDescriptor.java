@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 Google, Inc.
+ * Copyright (C) 2015 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,17 +13,28 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.internal.codegen;
+
+import static com.google.auto.common.MoreElements.isAnnotationPresent;
+import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.base.Verify.verify;
+import static dagger.internal.codegen.ConfigurationAnnotations.getModuleAnnotation;
+import static dagger.internal.codegen.ConfigurationAnnotations.getModuleIncludes;
+import static dagger.internal.codegen.DaggerElements.getAnnotationMirror;
+import static javax.lang.model.type.TypeKind.DECLARED;
+import static javax.lang.model.type.TypeKind.NONE;
+import static javax.lang.model.util.ElementFilter.methodsIn;
+import static javax.lang.model.util.ElementFilter.typesIn;
 
 import com.google.auto.common.MoreElements;
 import com.google.auto.common.MoreTypes;
 import com.google.auto.value.AutoValue;
-import com.google.common.base.Function;
-import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableSet;
-import com.google.common.collect.Iterables;
+import com.google.common.collect.Sets;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import dagger.Binds;
+import dagger.BindsOptionalOf;
 import dagger.Module;
 import dagger.Multibindings;
 import dagger.Provides;
@@ -33,6 +44,7 @@ import dagger.producers.Produces;
 import java.lang.annotation.Annotation;
 import java.util.EnumSet;
 import java.util.LinkedHashSet;
+import java.util.Optional;
 import java.util.Set;
 import javax.lang.model.element.AnnotationMirror;
 import javax.lang.model.element.ExecutableElement;
@@ -40,26 +52,8 @@ import javax.lang.model.element.TypeElement;
 import javax.lang.model.type.TypeMirror;
 import javax.lang.model.util.Elements;
 
-import static com.google.auto.common.MoreElements.getAnnotationMirror;
-import static com.google.auto.common.MoreElements.isAnnotationPresent;
-import static com.google.common.base.Preconditions.checkArgument;
-import static com.google.common.base.Preconditions.checkState;
-import static com.google.common.base.Verify.verify;
-import static dagger.internal.codegen.ConfigurationAnnotations.getModuleIncludes;
-import static javax.lang.model.type.TypeKind.DECLARED;
-import static javax.lang.model.type.TypeKind.NONE;
-import static javax.lang.model.util.ElementFilter.methodsIn;
-import static javax.lang.model.util.ElementFilter.typesIn;
-
 @AutoValue
 abstract class ModuleDescriptor {
-  static final Function<ModuleDescriptor, TypeElement> getModuleElement() {
-    return new Function<ModuleDescriptor, TypeElement>() {
-      @Override public TypeElement apply(ModuleDescriptor input) {
-        return input.moduleElement();
-      }
-    };
-  }
 
   abstract TypeElement moduleElement();
 
@@ -67,27 +61,24 @@ abstract class ModuleDescriptor {
 
   abstract ImmutableSet<ContributionBinding> bindings();
 
-  /**
-   * The multibinding declarations contained in this module.
-   */
+  /** The multibinding declarations contained in this module. */
   abstract ImmutableSet<MultibindingDeclaration> multibindingDeclarations();
 
-  /**
-   * The {@link Binds} method declarations that define delegate bindings.
-   */
+  /** The {@link Module#subcomponents() subcomponent declarations} contained in this module. */
+  abstract ImmutableSet<SubcomponentDeclaration> subcomponentDeclarations();
+
+  /** The {@link Binds} method declarations that define delegate bindings. */
   abstract ImmutableSet<DelegateDeclaration> delegateDeclarations();
 
+  /** The {@link BindsOptionalOf} method declarations that define optional bindings. */
+  abstract ImmutableSet<OptionalBindingDeclaration> optionalDeclarations();
+
   enum Kind {
-    MODULE(
-        Module.class, Provides.class, ImmutableSet.of(Module.class)),
-    PRODUCER_MODULE(
-        ProducerModule.class,
-        Produces.class,
-        ImmutableSet.of(Module.class, ProducerModule.class));
+    MODULE(Module.class, Provides.class),
+    PRODUCER_MODULE(ProducerModule.class, Produces.class);
 
     private final Class<? extends Annotation> moduleAnnotation;
     private final Class<? extends Annotation> methodAnnotation;
-    private final ImmutableSet<? extends Class<? extends Annotation>> includesTypes;
 
     /**
      * Returns the kind of an annotated element if it is annotated with one of the
@@ -105,16 +96,18 @@ abstract class ModuleDescriptor {
       }
       checkArgument(
           kinds.size() <= 1, "%s cannot be annotated with more than one of %s", element, kinds);
-      return Optional.fromNullable(Iterables.getOnlyElement(kinds, null));
+      return kinds.stream().findFirst();
     }
 
     Kind(
         Class<? extends Annotation> moduleAnnotation,
-        Class<? extends Annotation> methodAnnotation,
-        ImmutableSet<? extends Class<? extends Annotation>> includesTypes) {
+        Class<? extends Annotation> methodAnnotation) {
       this.moduleAnnotation = moduleAnnotation;
       this.methodAnnotation = methodAnnotation;
-      this.includesTypes = includesTypes;
+    }
+
+    Optional<AnnotationMirror> getModuleAnnotationMirror(TypeElement element) {
+      return getAnnotationMirror(element, moduleAnnotation);
     }
 
     Class<? extends Annotation> moduleAnnotation() {
@@ -125,8 +118,15 @@ abstract class ModuleDescriptor {
       return methodAnnotation;
     }
 
-    ImmutableSet<? extends Class<? extends Annotation>> includesTypes() {
-      return includesTypes;
+    ImmutableSet<Kind> includesKinds() {
+      switch (this) {
+        case MODULE:
+          return Sets.immutableEnumSet(MODULE);
+        case PRODUCER_MODULE:
+          return Sets.immutableEnumSet(MODULE, PRODUCER_MODULE);
+        default:
+          throw new AssertionError(this);
+      }
     }
   }
 
@@ -136,29 +136,34 @@ abstract class ModuleDescriptor {
     private final ProductionBinding.Factory productionBindingFactory;
     private final MultibindingDeclaration.Factory multibindingDeclarationFactory;
     private final DelegateDeclaration.Factory bindingDelegateDeclarationFactory;
+    private final SubcomponentDeclaration.Factory subcomponentDeclarationFactory;
+    private final OptionalBindingDeclaration.Factory optionalBindingDeclarationFactory;
 
     Factory(
         Elements elements,
         ProvisionBinding.Factory provisionBindingFactory,
         ProductionBinding.Factory productionBindingFactory,
         MultibindingDeclaration.Factory multibindingDeclarationFactory,
-        DelegateDeclaration.Factory bindingDelegateDeclarationFactory) {
+        DelegateDeclaration.Factory bindingDelegateDeclarationFactory,
+        SubcomponentDeclaration.Factory subcomponentDeclarationFactory,
+        OptionalBindingDeclaration.Factory optionalBindingDeclarationFactory) {
       this.elements = elements;
       this.provisionBindingFactory = provisionBindingFactory;
       this.productionBindingFactory = productionBindingFactory;
       this.multibindingDeclarationFactory = multibindingDeclarationFactory;
       this.bindingDelegateDeclarationFactory = bindingDelegateDeclarationFactory;
+      this.subcomponentDeclarationFactory = subcomponentDeclarationFactory;
+      this.optionalBindingDeclarationFactory = optionalBindingDeclarationFactory;
     }
 
     ModuleDescriptor create(TypeElement moduleElement) {
-      checkState(getModuleAnnotation(moduleElement).isPresent(),
-          "%s did not have an AnnotationMirror for @Module",
-          moduleElement.getQualifiedName());
-
       ImmutableSet.Builder<ContributionBinding> bindings = ImmutableSet.builder();
       ImmutableSet.Builder<DelegateDeclaration> delegates = ImmutableSet.builder();
       ImmutableSet.Builder<MultibindingDeclaration> multibindingDeclarations =
           ImmutableSet.builder();
+      ImmutableSet.Builder<OptionalBindingDeclaration> optionalDeclarations =
+          ImmutableSet.builder();
+
       for (ExecutableElement moduleMethod : methodsIn(elements.getAllMembers(moduleElement))) {
         if (isAnnotationPresent(moduleMethod, Provides.class)) {
           bindings.add(provisionBindingFactory.forProvidesMethod(moduleMethod, moduleElement));
@@ -173,6 +178,10 @@ abstract class ModuleDescriptor {
           multibindingDeclarations.add(
               multibindingDeclarationFactory.forMultibindsMethod(moduleMethod, moduleElement));
         }
+        if (isAnnotationPresent(moduleMethod, BindsOptionalOf.class)) {
+          optionalDeclarations.add(
+              optionalBindingDeclarationFactory.forMethod(moduleMethod, moduleElement));
+        }
       }
 
       for (TypeElement memberType : typesIn(elements.getAllMembers(moduleElement))) {
@@ -184,16 +193,12 @@ abstract class ModuleDescriptor {
 
       return new AutoValue_ModuleDescriptor(
           moduleElement,
-          ImmutableSet.copyOf(
-              collectIncludedModules(new LinkedHashSet<ModuleDescriptor>(), moduleElement)),
+          ImmutableSet.copyOf(collectIncludedModules(new LinkedHashSet<>(), moduleElement)),
           bindings.build(),
           multibindingDeclarations.build(),
-          delegates.build());
-    }
-
-    private static Optional<AnnotationMirror> getModuleAnnotation(TypeElement moduleElement) {
-      return getAnnotationMirror(moduleElement, Module.class)
-          .or(getAnnotationMirror(moduleElement, ProducerModule.class));
+          subcomponentDeclarationFactory.forModule(moduleElement),
+          delegates.build(),
+          optionalDeclarations.build());
     }
 
     @CanIgnoreReturnValue
@@ -209,9 +214,11 @@ abstract class ModuleDescriptor {
       }
       Optional<AnnotationMirror> moduleAnnotation = getModuleAnnotation(moduleElement);
       if (moduleAnnotation.isPresent()) {
-        for (TypeMirror moduleIncludesType : getModuleIncludes(moduleAnnotation.get())) {
-          includedModules.add(create(MoreTypes.asTypeElement(moduleIncludesType)));
-        }
+        getModuleIncludes(moduleAnnotation.get())
+            .stream()
+            .map(MoreTypes::asTypeElement)
+            .map(this::create)
+            .forEach(includedModules::add);
       }
       return includedModules;
     }

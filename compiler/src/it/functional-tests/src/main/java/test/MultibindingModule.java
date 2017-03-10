@@ -1,5 +1,5 @@
 /*
-* Copyright (C) 2015 Google, Inc.
+* Copyright (C) 2015 The Dagger Authors.
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -13,6 +13,7 @@
 * See the License for the specific language governing permissions and
 * limitations under the License.
 */
+
 package test;
 
 import dagger.Module;
@@ -40,13 +41,6 @@ class MultibindingModule {
   @StringKey("foo")
   static String provideFooKey(@SuppressWarnings("unused") double doubleDependency) {
     return "foo value";
-  }
-
-  @Provides
-  @IntoMap
-  @StringKey("foo @Provides(type)")
-  static String provideFooProvidesTypeKey(@SuppressWarnings("unused") double doubleDependency) {
-    return "foo @Provides(type) value";
   }
 
   @Provides
@@ -83,14 +77,8 @@ class MultibindingModule {
   }
 
   @Provides
-  @IntoSet
-  static int provideIntoSetWithProvidesType() {
-    return -100;
-  }
-
-  @Provides
   @ElementsIntoSet
-  static Set<Integer> provideElementsIntoSetWithProvidesType() {
+  static Set<Integer> provideElementsIntoSet() {
     Set<Integer> set = new HashSet<>();
     set.add(-101);
     set.add(-102);

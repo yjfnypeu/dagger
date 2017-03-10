@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Google, Inc.
+ * Copyright (C) 2016 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,11 +13,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package test.binds;
 
 import dagger.Binds;
 import dagger.Module;
 import dagger.Provides;
+import dagger.Reusable;
 import dagger.multibindings.ElementsIntoSet;
 import dagger.multibindings.IntKey;
 import dagger.multibindings.IntoMap;
@@ -35,6 +37,11 @@ import test.SomeQualifier;
 abstract class SimpleBindingModule {
   @Binds
   abstract Object bindObject(FooOfStrings impl);
+
+  @Binds
+  @Reusable
+  @SomeQualifier
+  abstract Object bindReusableObject(FooOfStrings impl);
 
   @Binds
   abstract Foo<String> bindFooOfStrings(FooOfStrings impl);
@@ -115,6 +122,24 @@ abstract class SimpleBindingModule {
   @IntKey(789)
   static Object provide789ForMap() {
     return "789-string";
+  }
+
+  @Binds
+  @SomeQualifier
+  abstract int primitiveToPrimitive(int intValue);
+
+  @Binds
+  @IntoSet
+  abstract int intValueIntoSet(int intValue);
+
+  @Binds
+  @IntoMap
+  @IntKey(10)
+  abstract int intValueIntoMap(int intValue);
+
+  @Provides
+  static int intValue() {
+    return 100;
   }
 
   @Binds

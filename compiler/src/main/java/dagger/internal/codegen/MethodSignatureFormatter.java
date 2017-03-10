@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Google, Inc.
+ * Copyright (C) 2014 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,14 +13,18 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.internal.codegen;
+
+import static com.google.common.base.Preconditions.checkState;
+import static dagger.internal.codegen.ErrorMessages.stripCommonTypePrefixes;
+import static dagger.internal.codegen.InjectionAnnotations.getQualifier;
 
 import com.google.auto.common.MoreElements;
 import com.google.auto.common.MoreTypes;
-import com.google.common.base.Optional;
-import dagger.internal.codegen.Key.BindingMethodIdentifier;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Optional;
 import javax.lang.model.element.AnnotationMirror;
 import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.TypeElement;
@@ -29,9 +33,6 @@ import javax.lang.model.type.DeclaredType;
 import javax.lang.model.type.ExecutableType;
 import javax.lang.model.type.TypeMirror;
 import javax.lang.model.util.Types;
-
-import static com.google.common.base.Preconditions.checkState;
-import static dagger.internal.codegen.ErrorMessages.stripCommonTypePrefixes;
 
 /**
  * Formats the signature of an {@link ExecutableElement} suitable for use in error messages.
@@ -47,7 +48,7 @@ final class MethodSignatureFormatter extends Formatter<ExecutableElement> {
   }
 
   @Override public String format(ExecutableElement method) {
-    return format(method, Optional.<DeclaredType>absent());
+    return format(method, Optional.empty());
   }
 
   /**
@@ -94,18 +95,13 @@ final class MethodSignatureFormatter extends Formatter<ExecutableElement> {
     return builder.toString();
   }
 
-  String format(BindingMethodIdentifier bindingMethodIdentifier) {
-    return format(
-        MoreElements.asExecutable(bindingMethodIdentifier.bindingMethod()),
-        Optional.of(MoreTypes.asDeclared(bindingMethodIdentifier.contributingModule().asType())));
-  }
-
   private static void appendParameter(StringBuilder builder, VariableElement parameter,
       TypeMirror type) {
-    Optional<AnnotationMirror> qualifier = InjectionAnnotations.getQualifier(parameter);
-    if (qualifier.isPresent()) {
-      builder.append(ErrorMessages.format(qualifier.get())).append(' ');
-    }
+    getQualifier(parameter)
+        .ifPresent(
+            qualifier -> {
+              builder.append(ErrorMessages.format(qualifier)).append(' ');
+            });
     builder.append(nameOfType(type));
   }
 

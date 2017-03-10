@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 Google, Inc.
+ * Copyright (C) 2015 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.internal.codegen;
+
+import static com.google.common.truth.Truth.assertAbout;
+import static com.google.testing.compile.JavaSourcesSubject.assertThat;
+import static com.google.testing.compile.JavaSourcesSubjectFactory.javaSources;
+import static dagger.internal.codegen.GeneratedLines.GENERATED_ANNOTATION;
 
 import com.google.common.collect.ImmutableList;
 import com.google.testing.compile.JavaFileObjects;
@@ -21,10 +27,6 @@ import javax.tools.JavaFileObject;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
-
-import static com.google.common.truth.Truth.assertAbout;
-import static com.google.testing.compile.JavaSourcesSubjectFactory.javaSources;
-import static dagger.internal.codegen.GeneratedLines.GENERATED_ANNOTATION;
 
 @RunWith(JUnit4.class)
 public final class SubcomponentValidationTest {
@@ -197,12 +199,16 @@ public final class SubcomponentValidationTest {
         "interface ChildComponent {",
         "  String getString();",
         "}");
-    assertAbout(javaSources()).that(ImmutableList.of(moduleFile, componentFile, childComponentFile))
+    assertAbout(javaSources())
+        .that(ImmutableList.of(moduleFile, componentFile, childComponentFile))
         .processedWith(new ComponentProcessor())
         .failsToCompile()
         .withErrorContaining(
-            "java.lang.Integer cannot be provided without an @Inject constructor or from an "
-                + "@Provides-annotated method");
+            "[test.ChildComponent.getString()] "
+                + "java.lang.Integer cannot be provided without an @Inject constructor or from an "
+                + "@Provides-annotated method")
+        .in(componentFile)
+        .onLine(6);
   }
 
   @Test public void subcomponentOnConcreteType() {
@@ -365,7 +371,7 @@ public final class SubcomponentValidationTest {
             "  }",
             "",
             "  public static ParentComponent create() {  ",
-            "    return builder().build();",
+            "    return new Builder().build();",
             "  }",
             "",
             "  @SuppressWarnings(\"unchecked\")",
@@ -522,7 +528,7 @@ public final class SubcomponentValidationTest {
             "  }",
             "",
             "  public static ParentComponent create() {",
-            "    return builder().build();",
+            "    return new Builder().build();",
             "  }",
             "",
             "  @Override",
@@ -629,7 +635,7 @@ public final class SubcomponentValidationTest {
             "  }",
             "",
             "  public static ParentComponent create() {",
-            "    return builder().build();",
+            "    return new Builder().build();",
             "  }",
             "",
             "  @Override",
@@ -727,7 +733,7 @@ public final class SubcomponentValidationTest {
             "  }",
             "",
             "  public static ParentComponent create() {",
-            "    return builder().build();",
+            "    return new Builder().build();",
             "  }",
             "",
             "  @Override",
@@ -806,7 +812,7 @@ public final class SubcomponentValidationTest {
             "  }",
             "",
             "  public static C create() {",
-            "    return builder().build();",
+            "    return new Builder().build();",
             "  }",
             "",
             "  @Override",
@@ -876,11 +882,17 @@ public final class SubcomponentValidationTest {
             "package test;",
             "",
             "import javax.annotation.Generated;",
+            "import javax.inject.Provider;",
             "",
             GENERATED_ANNOTATION,
             "public final class DaggerC implements C {",
+            "",
+            "  private Provider<C.Foo.Sub.Builder> fooBuilderProvider;",
+            "  private Provider<C.Bar.Sub.Builder> barBuilderProvider;",
+            "",
             "  private DaggerC(Builder builder) {",
             "    assert builder != null;",
+            "    initialize(builder);",
             "  }",
             "",
             "  public static Builder builder() {",
@@ -888,17 +900,36 @@ public final class SubcomponentValidationTest {
             "  }",
             "",
             "  public static C create() {",
-            "    return builder().build();",
+            "    return new Builder().build();",
+            "  }",
+            "",
+            "  @SuppressWarnings(\"unchecked\")",
+            "  private void initialize(final Builder builder) {",
+            "    this.fooBuilderProvider = ",
+            "        new dagger.internal.Factory<C.Foo.Sub.Builder>() {",
+            "          @Override",
+            "          public C.Foo.Sub.Builder get() {",
+            "            return new Foo_SubBuilder();",
+            "          }",
+            "        };",
+            "",
+            "    this.barBuilderProvider = ",
+            "        new dagger.internal.Factory<C.Bar.Sub.Builder>() {",
+            "          @Override",
+            "          public C.Bar.Sub.Builder get() {",
+            "            return new Bar_SubBuilder();",
+            "          }",
+            "        };",
             "  }",
             "",
             "  @Override",
             "  public C.Foo.Sub.Builder fooBuilder() {",
-            "    return new Foo_SubBuilder();",
+            "    return fooBuilderProvider.get();",
             "  }",
             "",
             "  @Override",
             "  public C.Bar.Sub.Builder barBuilder() {",
-            "    return new Bar_SubBuilder();",
+            "    return barBuilderProvider.get();",
             "  }",
             "",
             "  public static final class Builder {",
@@ -942,5 +973,61 @@ public final class SubcomponentValidationTest {
         .compilesWithoutError()
         .and()
         .generatesSources(componentGeneratedFile);
+  }
+
+  @Test
+  public void duplicateBindingWithSubcomponentDeclaration() {
+    JavaFileObject module =
+        JavaFileObjects.forSourceLines(
+            "test.TestModule",
+            "package test;",
+            "",
+            "import dagger.Module;",
+            "import dagger.Provides;",
+            "",
+            "@Module(subcomponents = Sub.class)",
+            "class TestModule {",
+            "  @Provides Sub.Builder providesConflictsWithModuleSubcomponents() { return null; }",
+            "  @Provides Object usesSubcomponentBuilder(Sub.Builder builder) {",
+            "    return new Builder().toString();",
+            "  }",
+            "}");
+
+    JavaFileObject subcomponent =
+        JavaFileObjects.forSourceLines(
+            "test.Sub",
+            "package test;",
+            "",
+            "import dagger.Subcomponent;",
+            "",
+            "@Subcomponent",
+            "interface Sub {",
+            "  @Subcomponent.Builder",
+            "  interface Builder {",
+            "    Sub build();",
+            "  }",
+            "}");
+
+    JavaFileObject component =
+        JavaFileObjects.forSourceLines(
+            "test.Sub",
+            "package test;",
+            "",
+            "import dagger.Component;",
+            "",
+            "@Component(modules = TestModule.class)",
+            "interface C {",
+            "  Object dependsOnBuilder();",
+            "}");
+
+    assertThat(module, component, subcomponent)
+        .processedWith(new ComponentProcessor())
+        .failsToCompile()
+        .withErrorContaining("test.Sub.Builder is bound multiple times:")
+        .and()
+        .withErrorContaining(
+            "@Provides test.Sub.Builder test.TestModule.providesConflictsWithModuleSubcomponents()")
+        .and()
+        .withErrorContaining("@Module(subcomponents = test.Sub.class) for test.TestModule");
   }
 }

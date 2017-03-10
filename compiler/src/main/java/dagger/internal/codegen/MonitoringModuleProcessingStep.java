@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 Google, Inc.
+ * Copyright (C) 2015 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.internal.codegen;
 
 import com.google.auto.common.BasicAnnotationProcessor.ProcessingStep;
@@ -49,11 +50,7 @@ final class MonitoringModuleProcessingStep implements ProcessingStep {
   public Set<Element> process(
       SetMultimap<Class<? extends Annotation>, Element> elementsByAnnotation) {
     for (Element element : elementsByAnnotation.values()) {
-      try {
-        monitoringModuleGenerator.generate(MoreElements.asType(element));
-      } catch (SourceFileGenerationException e) {
-        e.printMessageTo(messager);
-      }
+      monitoringModuleGenerator.generate(MoreElements.asType(element), messager);
     }
     return ImmutableSet.of();
   }

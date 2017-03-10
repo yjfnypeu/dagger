@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Google, Inc.
+ * Copyright (C) 2014 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,15 +13,18 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package dagger.internal.codegen;
 
-import java.util.Iterator;
-import javax.lang.model.type.DeclaredType;
-import javax.lang.model.type.TypeMirror;
-import javax.lang.model.util.SimpleTypeVisitor6;
+package dagger.internal.codegen;
 
 import static com.google.common.base.CaseFormat.LOWER_CAMEL;
 import static com.google.common.base.CaseFormat.UPPER_CAMEL;
+import static dagger.internal.codegen.ConfigurationAnnotations.isSubcomponentBuilder;
+
+import java.util.Iterator;
+import javax.lang.model.element.Element;
+import javax.lang.model.type.DeclaredType;
+import javax.lang.model.type.TypeMirror;
+import javax.lang.model.util.SimpleTypeVisitor6;
 
 /**
  * Suggests a variable name for a type based on a {@link Binding}. Prefer
@@ -47,9 +50,16 @@ final class BindingVariableNamer {
     type.accept(
         new SimpleTypeVisitor6<Void, StringBuilder>() {
           @Override
-          public Void visitDeclared(DeclaredType t, StringBuilder builder) {
-            builder.append(t.asElement().getSimpleName());
-            Iterator<? extends TypeMirror> argumentIterator = t.getTypeArguments().iterator();
+          public Void visitDeclared(DeclaredType declaredType, StringBuilder builder) {
+            Element element = declaredType.asElement();
+            if (isSubcomponentBuilder(element)) {
+              // Most Subcomponent builders are named "Builder", so add their associated
+              // Subcomponent type so that they're not all "builderProvider{N}"
+              builder.append(element.getEnclosingElement().getSimpleName());
+            }
+            builder.append(element.getSimpleName());
+            Iterator<? extends TypeMirror> argumentIterator =
+                declaredType.getTypeArguments().iterator();
             if (argumentIterator.hasNext()) {
               builder.append("Of");
               TypeMirror first = argumentIterator.next();

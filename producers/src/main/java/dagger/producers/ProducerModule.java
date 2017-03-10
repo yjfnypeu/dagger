@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Google Inc.
+ * Copyright (C) 2014 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,16 +13,17 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.producers;
+
+import static java.lang.annotation.ElementType.TYPE;
+import static java.lang.annotation.RetentionPolicy.RUNTIME;
 
 import dagger.Module;
 import dagger.internal.Beta;
 import java.lang.annotation.Documented;
 import java.lang.annotation.Retention;
 import java.lang.annotation.Target;
-
-import static java.lang.annotation.ElementType.TYPE;
-import static java.lang.annotation.RetentionPolicy.RUNTIME;
 
 /**
  * Annotates a class that contributes {@link Produces} bindings to the production component.
@@ -40,4 +41,13 @@ public @interface ProducerModule {
    * inclusions recursively, are all contributed to the object graph.
    */
   Class<?>[] includes() default {};
+
+  /**
+   * Any {@link dagger.Subcomponent}- or {@link ProductionSubcomponent}-annotated classes which
+   * should be children of the component in which this module is installed. A subcomponent may be
+   * listed in more than one module in a component.
+   *
+   * @since 2.7
+   */
+  Class<?>[] subcomponents() default {};
 }

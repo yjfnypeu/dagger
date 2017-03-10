@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Google, Inc.
+ * Copyright (C) 2014 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,50 +13,55 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.internal.codegen;
 
-import com.google.common.base.Function;
+import static com.google.common.base.Preconditions.checkArgument;
+import static com.squareup.javapoet.ClassName.OBJECT;
+import static com.squareup.javapoet.MethodSpec.constructorBuilder;
+import static com.squareup.javapoet.MethodSpec.methodBuilder;
+import static com.squareup.javapoet.TypeSpec.classBuilder;
+import static dagger.internal.codegen.AnnotationSpecs.Suppression.UNCHECKED;
+import static dagger.internal.codegen.CodeBlocks.makeParametersCodeBlock;
+import static dagger.internal.codegen.SourceFiles.frameworkTypeUsageStatement;
+import static dagger.internal.codegen.SourceFiles.generateBindingFieldsForDependencies;
+import static dagger.internal.codegen.SourceFiles.generatedClassNameForBinding;
+import static dagger.internal.codegen.TypeNames.ASYNC_FUNCTION;
+import static dagger.internal.codegen.TypeNames.EXECUTOR;
+import static dagger.internal.codegen.TypeNames.FUTURES;
+import static dagger.internal.codegen.TypeNames.PRODUCERS;
+import static dagger.internal.codegen.TypeNames.PRODUCER_TOKEN;
+import static dagger.internal.codegen.TypeNames.RUNNABLE;
+import static dagger.internal.codegen.TypeNames.VOID_CLASS;
+import static dagger.internal.codegen.TypeNames.abstractProducerOf;
+import static dagger.internal.codegen.TypeNames.listOf;
+import static dagger.internal.codegen.TypeNames.listenableFutureOf;
+import static dagger.internal.codegen.TypeNames.producedOf;
+import static java.util.stream.Collectors.joining;
+import static javax.lang.model.element.Modifier.FINAL;
+import static javax.lang.model.element.Modifier.PRIVATE;
+import static javax.lang.model.element.Modifier.PROTECTED;
+import static javax.lang.model.element.Modifier.PUBLIC;
+
 import com.google.common.base.Joiner;
-import com.google.common.base.Optional;
-import com.google.common.base.Predicate;
 import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
 import com.squareup.javapoet.ClassName;
 import com.squareup.javapoet.CodeBlock;
+import com.squareup.javapoet.FieldSpec;
 import com.squareup.javapoet.MethodSpec;
 import com.squareup.javapoet.ParameterizedTypeName;
 import com.squareup.javapoet.TypeName;
 import com.squareup.javapoet.TypeSpec;
 import dagger.producers.Producer;
+import java.util.Map;
+import java.util.Optional;
 import javax.annotation.processing.Filer;
 import javax.lang.model.element.Element;
 import javax.lang.model.type.TypeMirror;
 import javax.lang.model.util.Elements;
-
-import static com.squareup.javapoet.ClassName.OBJECT;
-import static com.squareup.javapoet.MethodSpec.constructorBuilder;
-import static com.squareup.javapoet.MethodSpec.methodBuilder;
-import static com.squareup.javapoet.TypeSpec.classBuilder;
-import static dagger.internal.codegen.AnnotationSpecs.SUPPRESS_WARNINGS_UNCHECKED;
-import static dagger.internal.codegen.CodeBlocks.makeParametersCodeBlock;
-import static dagger.internal.codegen.SourceFiles.frameworkTypeUsageStatement;
-import static dagger.internal.codegen.SourceFiles.generatedClassNameForBinding;
-import static dagger.internal.codegen.TypeNames.ASYNC_FUNCTION;
-import static dagger.internal.codegen.TypeNames.FUTURES;
-import static dagger.internal.codegen.TypeNames.PRODUCERS;
-import static dagger.internal.codegen.TypeNames.PRODUCER_TOKEN;
-import static dagger.internal.codegen.TypeNames.VOID_CLASS;
-import static dagger.internal.codegen.TypeNames.abstractProducerOf;
-import static dagger.internal.codegen.TypeNames.listOf;
-import static dagger.internal.codegen.TypeNames.listenableFutureOf;
-import static dagger.internal.codegen.TypeNames.producedOf;
-import static javax.lang.model.element.Modifier.FINAL;
-import static javax.lang.model.element.Modifier.PRIVATE;
-import static javax.lang.model.element.Modifier.PROTECTED;
-import static javax.lang.model.element.Modifier.PUBLIC;
-import static javax.lang.model.element.Modifier.STATIC;
 
 /**
  * Generates {@link Producer} implementations from {@link ProductionBinding} instances.
@@ -79,12 +84,14 @@ final class ProducerFactoryGenerator extends SourceFileGenerator<ProductionBindi
 
   @Override
   Optional<? extends Element> getElementForErrorReporting(ProductionBinding binding) {
-    return Optional.of(binding.bindingElement());
+    return binding.bindingElement();
   }
 
   @Override
   Optional<TypeSpec.Builder> write(ClassName generatedTypeName, ProductionBinding binding) {
-    TypeName providedTypeName = TypeName.get(binding.factoryType());
+    checkArgument(binding.bindingElement().isPresent());
+
+    TypeName providedTypeName = TypeName.get(binding.contributedType());
     TypeName futureTypeName = listenableFutureOf(providedTypeName);
 
     TypeSpec.Builder factoryBuilder =
@@ -92,25 +99,46 @@ final class ProducerFactoryGenerator extends SourceFileGenerator<ProductionBindi
             .addModifiers(PUBLIC, FINAL)
             .superclass(abstractProducerOf(providedTypeName));
 
-    ImmutableMap<BindingKey, FrameworkField> fields =
-        SourceFiles.generateBindingFieldsForDependencies(binding);
+    UniqueNameSet uniqueFieldNames = new UniqueNameSet();
+    ImmutableMap.Builder<BindingKey, FieldSpec> fieldsBuilder = ImmutableMap.builder();
 
-    MethodSpec.Builder constructorBuilder =
-        constructorBuilder()
-            .addModifiers(PUBLIC)
-            .addStatement(
-                "super($L, $L)",
-                fields.get(binding.monitorRequest().get().bindingKey()).name(),
-                producerTokenConstruction(generatedTypeName, binding));
+    MethodSpec.Builder constructorBuilder = constructorBuilder().addModifiers(PUBLIC);
 
-    if (!binding.bindingElement().getModifiers().contains(STATIC)) {
-      TypeName moduleType = TypeName.get(binding.bindingTypeElement().asType());
-      addFieldAndConstructorParameter(factoryBuilder, constructorBuilder, "module", moduleType);
+    Optional<FieldSpec> moduleField =
+        binding.requiresModuleInstance()
+            ? Optional.of(
+                addFieldAndConstructorParameter(
+                    factoryBuilder,
+                    constructorBuilder,
+                    uniqueFieldNames.getUniqueName("module"),
+                    TypeName.get(binding.bindingTypeElement().get().asType())))
+            : Optional.empty();
+
+    for (Map.Entry<BindingKey, FrameworkField> entry :
+        generateBindingFieldsForDependencies(binding).entrySet()) {
+      BindingKey bindingKey = entry.getKey();
+      FrameworkField bindingField = entry.getValue();
+      FieldSpec field =
+          addFieldAndConstructorParameter(
+              factoryBuilder,
+              constructorBuilder,
+              uniqueFieldNames.getUniqueName(bindingField.name()),
+              bindingField.type());
+      fieldsBuilder.put(bindingKey, field);
     }
+    ImmutableMap<BindingKey, FieldSpec> fields = fieldsBuilder.build();
 
-    for (FrameworkField bindingField : fields.values()) {
-      addFieldAndConstructorParameter(
-          factoryBuilder, constructorBuilder, bindingField.name(), bindingField.type());
+    constructorBuilder.addStatement(
+        "super($N, $L)",
+        fields.get(binding.monitorRequest().get().bindingKey()),
+        producerTokenConstruction(generatedTypeName, binding));
+
+    if (binding.requiresModuleInstance()) {
+      assignField(constructorBuilder, moduleField.get());
+    }
+    
+    for (FieldSpec field : fields.values()) {
+      assignField(constructorBuilder, field);
     }
 
     MethodSpec.Builder computeMethodBuilder =
@@ -122,8 +150,7 @@ final class ProducerFactoryGenerator extends SourceFileGenerator<ProductionBindi
     ImmutableList<DependencyRequest> asyncDependencies = asyncDependencies(binding);
     for (DependencyRequest dependency : asyncDependencies) {
       TypeName futureType = listenableFutureOf(asyncDependencyType(dependency));
-      CodeBlock futureAccess =
-          CodeBlock.of("$L.get()", fields.get(dependency.bindingKey()).name());
+      CodeBlock futureAccess = CodeBlock.of("$N.get()", fields.get(dependency.bindingKey()));
       computeMethodBuilder.addStatement(
           "$T $L = $L",
           futureType,
@@ -135,13 +162,15 @@ final class ProducerFactoryGenerator extends SourceFileGenerator<ProductionBindi
     FutureTransform futureTransform = FutureTransform.create(fields, binding, asyncDependencies);
 
     computeMethodBuilder.addStatement(
-        "return $T.transformAsync($L, this, executorProvider.get())",
+        "return $T.transformAsync($L, this, this)",
         FUTURES,
         futureTransform.futureCodeBlock());
 
-    factoryBuilder.addSuperinterface(
-        ParameterizedTypeName.get(
-            ASYNC_FUNCTION, futureTransform.applyArgType(), providedTypeName));
+    factoryBuilder
+        .addSuperinterface(
+            ParameterizedTypeName.get(
+                ASYNC_FUNCTION, futureTransform.applyArgType(), providedTypeName))
+        .addSuperinterface(EXECUTOR);
 
     MethodSpec.Builder applyMethodBuilder =
         methodBuilder("apply")
@@ -163,47 +192,62 @@ final class ProducerFactoryGenerator extends SourceFileGenerator<ProductionBindi
                     providedTypeName,
                     futureTransform.parameterCodeBlocks()));
     if (futureTransform.hasUncheckedCast()) {
-      applyMethodBuilder.addAnnotation(SUPPRESS_WARNINGS_UNCHECKED);
+      applyMethodBuilder.addAnnotation(AnnotationSpecs.suppressWarnings(UNCHECKED));
     }
+
+    MethodSpec.Builder executeMethodBuilder =
+        methodBuilder("execute")
+            .addModifiers(PUBLIC)
+            .addJavadoc("@deprecated this may only be called from the internal {@link #compute()}")
+            .addAnnotation(Deprecated.class)
+            .addAnnotation(Override.class)
+            .addParameter(RUNNABLE, "runnable")
+            .addStatement(
+                "assert monitor != null : $S",
+                "execute() may only be called internally from compute(); "
+                    + "if it's called explicitly, the monitor might be null")
+            .addStatement("monitor.ready()")
+            .addStatement("executorProvider.get().execute(runnable)");
 
     factoryBuilder.addMethod(constructorBuilder.build());
     factoryBuilder.addMethod(computeMethodBuilder.build());
     factoryBuilder.addMethod(applyMethodBuilder.build());
+    factoryBuilder.addMethod(executeMethodBuilder.build());
 
     // TODO(gak): write a sensible toString
     return Optional.of(factoryBuilder);
   }
 
   // TODO(ronshapiro): consolidate versions of these
-  private static void addFieldAndConstructorParameter(
+  private static FieldSpec addFieldAndConstructorParameter(
       TypeSpec.Builder typeBuilder,
       MethodSpec.Builder constructorBuilder,
       String variableName,
       TypeName variableType) {
-    typeBuilder.addField(variableType, variableName, PRIVATE, FINAL);
+    FieldSpec field = FieldSpec.builder(variableType, variableName, PRIVATE, FINAL).build();
+    typeBuilder.addField(field);
+    constructorBuilder.addParameter(field.type, field.name);
+    return field;
+  }
+
+  private static void assignField(MethodSpec.Builder constructorBuilder, FieldSpec field) {
     constructorBuilder
-        .addParameter(variableType, variableName)
-        .addStatement("assert $L != null", variableName)
-        .addStatement("this.$1L = $1L", variableName);
+        .addStatement("assert $N != null", field)
+        .addStatement("this.$1N = $1N", field);
   }
 
   /** Returns a list of dependencies that are generated asynchronously. */
   private static ImmutableList<DependencyRequest> asyncDependencies(Binding binding) {
     final ImmutableMap<DependencyRequest, FrameworkDependency> frameworkDependencies =
-        FrameworkDependency.indexByDependencyRequest(
-            FrameworkDependency.frameworkDependenciesForBinding(binding));
-    return FluentIterable.from(binding.implicitDependencies())
+        binding.dependenciesToFrameworkDependenciesMap();
+    return FluentIterable.from(binding.dependencies())
         .filter(
-            new Predicate<DependencyRequest>() {
-              @Override
-              public boolean apply(DependencyRequest dependency) {
-                return isAsyncDependency(dependency)
+            dependency ->
+                isAsyncDependency(dependency)
                     && frameworkDependencies
                         .get(dependency)
                         .frameworkClass()
-                        .equals(Producer.class);
-              }
-            })
+                        .equals(Producer.class))
         .toList();
   }
 
@@ -215,23 +259,23 @@ final class ProducerFactoryGenerator extends SourceFileGenerator<ProductionBindi
                 "$S",
                 String.format(
                     "%s#%s",
-                    ClassName.get(binding.bindingTypeElement()),
-                    binding.bindingElement().getSimpleName()))
+                    ClassName.get(binding.bindingTypeElement().get()),
+                    binding.bindingElement().get().getSimpleName()))
             : CodeBlock.of("$T.class", generatedTypeName);
     return CodeBlock.of("$T.create($L)", PRODUCER_TOKEN, producerTokenArgs);
   }
 
   /** Returns a name of the variable representing this dependency's future. */
   private static String dependencyFutureName(DependencyRequest dependency) {
-    return dependency.requestElement().getSimpleName() + "Future";
+    return dependency.requestElement().get().getSimpleName() + "Future";
   }
 
   /** Represents the transformation of an input future by a producer method. */
   abstract static class FutureTransform {
-    protected final ImmutableMap<BindingKey, FrameworkField> fields;
+    protected final ImmutableMap<BindingKey, FieldSpec> fields;
     protected final ProductionBinding binding;
 
-    FutureTransform(ImmutableMap<BindingKey, FrameworkField> fields, ProductionBinding binding) {
+    FutureTransform(ImmutableMap<BindingKey, FieldSpec> fields, ProductionBinding binding) {
       this.fields = fields;
       this.binding = binding;
     }
@@ -254,7 +298,7 @@ final class ProducerFactoryGenerator extends SourceFileGenerator<ProductionBindi
     }
 
     static FutureTransform create(
-        ImmutableMap<BindingKey, FrameworkField> fields,
+        ImmutableMap<BindingKey, FieldSpec> fields,
         ProductionBinding binding,
         ImmutableList<DependencyRequest> asyncDependencies) {
       if (asyncDependencies.isEmpty()) {
@@ -269,8 +313,7 @@ final class ProducerFactoryGenerator extends SourceFileGenerator<ProductionBindi
   }
 
   static final class NoArgFutureTransform extends FutureTransform {
-    NoArgFutureTransform(
-        ImmutableMap<BindingKey, FrameworkField> fields, ProductionBinding binding) {
+    NoArgFutureTransform(ImmutableMap<BindingKey, FieldSpec> fields, ProductionBinding binding) {
       super(fields, binding);
     }
 
@@ -292,11 +335,10 @@ final class ProducerFactoryGenerator extends SourceFileGenerator<ProductionBindi
     @Override
     ImmutableList<CodeBlock> parameterCodeBlocks() {
       ImmutableList.Builder<CodeBlock> parameterCodeBlocks = ImmutableList.builder();
-      for (DependencyRequest dependency : binding.dependencies()) {
+      for (DependencyRequest dependency : binding.explicitDependencies()) {
         parameterCodeBlocks.add(
             frameworkTypeUsageStatement(
-                CodeBlock.of("$L", fields.get(dependency.bindingKey()).name()),
-                dependency.kind()));
+                CodeBlock.of("$N", fields.get(dependency.bindingKey())), dependency.kind()));
       }
       return parameterCodeBlocks.build();
     }
@@ -306,7 +348,7 @@ final class ProducerFactoryGenerator extends SourceFileGenerator<ProductionBindi
     private final DependencyRequest asyncDependency;
 
     SingleArgFutureTransform(
-        ImmutableMap<BindingKey, FrameworkField> fields,
+        ImmutableMap<BindingKey, FieldSpec> fields,
         ProductionBinding binding,
         DependencyRequest asyncDependency) {
       super(fields, binding);
@@ -325,13 +367,13 @@ final class ProducerFactoryGenerator extends SourceFileGenerator<ProductionBindi
 
     @Override
     String applyArgName() {
-      return asyncDependency.requestElement().getSimpleName().toString();
+      return asyncDependency.requestElement().get().getSimpleName().toString();
     }
 
     @Override
     ImmutableList<CodeBlock> parameterCodeBlocks() {
       ImmutableList.Builder<CodeBlock> parameterCodeBlocks = ImmutableList.builder();
-      for (DependencyRequest dependency : binding.dependencies()) {
+      for (DependencyRequest dependency : binding.explicitDependencies()) {
         // We really want to compare instances here, because asyncDependency is an element in the
         // set binding.dependencies().
         if (dependency == asyncDependency) {
@@ -340,8 +382,7 @@ final class ProducerFactoryGenerator extends SourceFileGenerator<ProductionBindi
           parameterCodeBlocks.add(
               // TODO(ronshapiro) extract this into a method shared by FutureTransform subclasses
               frameworkTypeUsageStatement(
-                  CodeBlock.of("$L", fields.get(dependency.bindingKey()).name()),
-                  dependency.kind()));
+                  CodeBlock.of("$N", fields.get(dependency.bindingKey())), dependency.kind()));
         }
       }
       return parameterCodeBlocks.build();
@@ -352,7 +393,7 @@ final class ProducerFactoryGenerator extends SourceFileGenerator<ProductionBindi
     private final ImmutableList<DependencyRequest> asyncDependencies;
 
     MultiArgFutureTransform(
-        ImmutableMap<BindingKey, FrameworkField> fields,
+        ImmutableMap<BindingKey, FieldSpec> fields,
         ProductionBinding binding,
         ImmutableList<DependencyRequest> asyncDependencies) {
       super(fields, binding);
@@ -365,15 +406,10 @@ final class ProducerFactoryGenerator extends SourceFileGenerator<ProductionBindi
           "$T.<$T>allAsList($L)",
           FUTURES,
           OBJECT,
-          makeParametersCodeBlock(
-              FluentIterable.from(asyncDependencies)
-                  .transform(
-                      new Function<DependencyRequest, CodeBlock>() {
-                        @Override
-                        public CodeBlock apply(DependencyRequest dependency) {
-                          return CodeBlock.of("$L", dependencyFutureName(dependency));
-                        }
-                      })));
+          asyncDependencies
+              .stream()
+              .map(ProducerFactoryGenerator::dependencyFutureName)
+              .collect(joining(", ")));
     }
 
     @Override
@@ -420,12 +456,10 @@ final class ProducerFactoryGenerator extends SourceFileGenerator<ProductionBindi
   }
 
   private static ImmutableList<CodeBlock> getParameterCodeBlocks(
-      ProductionBinding binding,
-      ImmutableMap<BindingKey, FrameworkField> fields,
-      String listArgName) {
+      ProductionBinding binding, ImmutableMap<BindingKey, FieldSpec> fields, String listArgName) {
     int argIndex = 0;
     ImmutableList.Builder<CodeBlock> codeBlocks = ImmutableList.builder();
-    for (DependencyRequest dependency : binding.dependencies()) {
+    for (DependencyRequest dependency : binding.explicitDependencies()) {
       if (isAsyncDependency(dependency)) {
         codeBlocks.add(
             CodeBlock.of(
@@ -434,8 +468,7 @@ final class ProducerFactoryGenerator extends SourceFileGenerator<ProductionBindi
       } else {
         codeBlocks.add(
             frameworkTypeUsageStatement(
-                CodeBlock.of("$L", fields.get(dependency.bindingKey()).name()),
-                dependency.kind()));
+                CodeBlock.of("$N", fields.get(dependency.bindingKey())), dependency.kind()));
       }
     }
     return codeBlocks.build();
@@ -457,10 +490,10 @@ final class ProducerFactoryGenerator extends SourceFileGenerator<ProductionBindi
     CodeBlock moduleCodeBlock =
         CodeBlock.of(
             "$L.$L($L)",
-            binding.bindingElement().getModifiers().contains(STATIC)
-                ? CodeBlock.of("$T", ClassName.get(binding.bindingTypeElement()))
-                : CodeBlock.of("$T.this.module", generatedTypeName),
-            binding.bindingElement().getSimpleName(),
+            binding.requiresModuleInstance()
+                ? CodeBlock.of("$T.this.module", generatedTypeName)
+                : CodeBlock.of("$T", ClassName.get(binding.bindingTypeElement().get())),
+            binding.bindingElement().get().getSimpleName(),
             makeParametersCodeBlock(parameterCodeBlocks));
 
     // NOTE(beder): We don't worry about catching exceptions from the monitor methods themselves
@@ -469,11 +502,21 @@ final class ProducerFactoryGenerator extends SourceFileGenerator<ProductionBindi
     ImmutableList.Builder<CodeBlock> codeBlocks = ImmutableList.builder();
     codeBlocks.add(CodeBlock.of("monitor.methodStarting();"));
 
-    CodeBlock returnCodeBlock =
-        binding.bindingKind().equals(ContributionBinding.Kind.FUTURE_PRODUCTION)
-            ? moduleCodeBlock
-            : CodeBlock.of(
-                "$T.<$T>immediateFuture($L)", FUTURES, providedTypeName, moduleCodeBlock);
+    final CodeBlock returnCodeBlock;
+    switch (binding.productionKind().get()) {
+      case IMMEDIATE:
+        returnCodeBlock =
+            CodeBlock.of("$T.<$T>immediateFuture($L)", FUTURES, providedTypeName, moduleCodeBlock);
+        break;
+      case FUTURE:
+        returnCodeBlock = moduleCodeBlock;
+        break;
+      case SET_OF_FUTURE:
+        returnCodeBlock = CodeBlock.of("$T.allAsSet($L)", PRODUCERS, moduleCodeBlock);
+        break;
+      default:
+        throw new AssertionError();
+    }
     return CodeBlock.of(
         Joiner.on('\n')
             .join(
@@ -493,13 +536,6 @@ final class ProducerFactoryGenerator extends SourceFileGenerator<ProductionBindi
    */
   private FluentIterable<? extends TypeName> getThrownTypeNames(
       Iterable<? extends TypeMirror> thrownTypes) {
-    return FluentIterable.from(thrownTypes)
-        .transform(
-            new Function<TypeMirror, TypeName>() {
-              @Override
-              public TypeName apply(TypeMirror type) {
-                return TypeName.get(type);
-              }
-            });
+    return FluentIterable.from(thrownTypes).transform(TypeName::get);
   }
 }

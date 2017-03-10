@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Google, Inc.
+ * Copyright (C) 2014 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,19 +13,19 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.internal.codegen;
+
+import static com.google.common.truth.Truth.assertAbout;
+import static com.google.testing.compile.JavaSourceSubjectFactory.javaSource;
+import static com.google.testing.compile.JavaSourcesSubjectFactory.javaSources;
+import static java.util.Arrays.asList;
 
 import com.google.testing.compile.JavaFileObjects;
 import javax.tools.JavaFileObject;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
-
-import static com.google.common.truth.Truth.assertAbout;
-import static com.google.common.truth.Truth.assert_;
-import static com.google.testing.compile.JavaSourceSubjectFactory.javaSource;
-import static com.google.testing.compile.JavaSourcesSubjectFactory.javaSources;
-import static java.util.Arrays.asList;
 
 @RunWith(JUnit4.class)
 public class GraphValidationScopingTest {
@@ -63,10 +63,12 @@ public class GraphValidationScopingTest {
         "  @Provides long integer() { return 0L; }",
         "  @Provides float floatingPoint() { return 0.0f; }",
         "}");
-    String errorMessage = "test.MyComponent (unscoped) may not reference scoped bindings:\n"
-        + "      @Provides @Singleton String test.ScopedModule.string()\n"
-        + "      @Singleton class test.ScopedType";
-    assert_().about(javaSources()).that(asList(componentFile, typeFile, moduleFile))
+    String errorMessage =
+        "test.MyComponent (unscoped) may not reference scoped bindings:\n"
+            + "      @Singleton class test.ScopedType\n"
+            + "      @Provides @Singleton String test.ScopedModule.string()";
+    assertAbout(javaSources())
+        .that(asList(componentFile, typeFile, moduleFile))
         .processedWith(new ComponentProcessor())
         .failsToCompile()
         .withErrorContaining(errorMessage);
@@ -113,11 +115,13 @@ public class GraphValidationScopingTest {
         "  @Provides long integer() { return 0L; }", // unscoped - valid
         "  @Provides @Singleton float floatingPoint() { return 0.0f; }", // same scope - valid
         "}");
-    String errorMessage = "test.MyComponent scoped with @Singleton "
-        + "may not reference bindings with different scopes:\n"
-        + "      @Provides @test.PerTest String test.ScopedModule.string()\n"
-        + "      @test.PerTest class test.ScopedType";
-    assert_().about(javaSources()).that(asList(componentFile, scopeFile, typeFile, moduleFile))
+    String errorMessage =
+        "test.MyComponent scoped with @Singleton "
+            + "may not reference bindings with different scopes:\n"
+            + "      @test.PerTest class test.ScopedType\n"
+            + "      @Provides @test.PerTest String test.ScopedModule.string()";
+    assertAbout(javaSources())
+        .that(asList(componentFile, scopeFile, typeFile, moduleFile))
         .processedWith(new ComponentProcessor())
         .failsToCompile()
         .withErrorContaining(errorMessage);
@@ -187,7 +191,7 @@ public class GraphValidationScopingTest {
         "@test.SimpleScope test.SimpleScopedComponent depends on more than one scoped component:\n"
         + "      @Singleton test.SingletonComponentA\n"
         + "      @Singleton test.SingletonComponentB";
-    assert_().about(javaSources())
+    assertAbout(javaSources())
         .that(
             asList(type, simpleScope, simpleScoped, singletonScopedA, singletonScopedB, scopeless))
         .processedWith(new ComponentProcessor())
@@ -228,7 +232,7 @@ public class GraphValidationScopingTest {
     String errorMessage =
         "test.UnscopedComponent (unscoped) cannot depend on scoped components:\n"
         + "      @Singleton test.ScopedComponent";
-    assert_().about(javaSources())
+    assertAbout(javaSources())
         .that(asList(type, scopedComponent, unscopedComponent))
         .processedWith(new ComponentProcessor())
         .failsToCompile()
@@ -275,7 +279,7 @@ public class GraphValidationScopingTest {
     String errorMessage =
         "This @Singleton component cannot depend on scoped components:\n"
         + "      @test.SimpleScope test.SimpleScopedComponent";
-    assert_().about(javaSources())
+    assertAbout(javaSources())
         .that(asList(type, simpleScope, simpleScoped, singletonScoped))
         .processedWith(new ComponentProcessor())
         .failsToCompile()
@@ -341,13 +345,13 @@ public class GraphValidationScopingTest {
         + "      @test.ScopeA test.ComponentLong\n"
         + "      @test.ScopeB test.ComponentMedium\n"
         + "      @test.ScopeA test.ComponentShort";
-    assert_().about(javaSources())
+    assertAbout(javaSources())
         .that(asList(type, scopeA, scopeB, longLifetime, mediumLifetime, shortLifetime))
         .processedWith(new ComponentProcessor())
         .failsToCompile()
         .withErrorContaining(errorMessage);
   }
-  
+
   @Test
   public void reusableNotAllowedOnComponent() {
     JavaFileObject someComponent =

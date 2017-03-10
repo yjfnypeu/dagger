@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Google, Inc.
+ * Copyright (C) 2016 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,8 +13,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.internal.codegen;
 
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import com.squareup.javapoet.ClassName;
 import com.squareup.javapoet.TypeSpec;
 import javax.lang.model.element.TypeElement;
@@ -27,15 +29,16 @@ final class TypeSpecs {
   /**
    * If {@code supertype} is a class, adds it as a superclass for {@code typeBuilder}; if it is an
    * interface, adds it as a superinterface.
+   *
+   * @return {@code typeBuilder}
    */
-  static void addSupertype(TypeSpec.Builder typeBuilder, TypeElement supertype) {
+  @CanIgnoreReturnValue
+  static TypeSpec.Builder addSupertype(TypeSpec.Builder typeBuilder, TypeElement supertype) {
     switch (supertype.getKind()) {
       case CLASS:
-        typeBuilder.superclass(ClassName.get(supertype));
-        break;
+        return typeBuilder.superclass(ClassName.get(supertype));
       case INTERFACE:
-        typeBuilder.addSuperinterface(ClassName.get(supertype));
-        break;
+        return typeBuilder.addSuperinterface(ClassName.get(supertype));
       default:
         throw new AssertionError(supertype + " is neither a class nor an interface.");
     }

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 Google, Inc.
+ * Copyright (C) 2015 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,17 +13,26 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.internal.codegen;
 
+import static com.google.auto.common.MoreElements.isAnnotationPresent;
+import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.collect.Iterables.getOnlyElement;
+import static dagger.internal.codegen.DaggerElements.getUnimplementedMethods;
+import static javax.lang.model.element.Modifier.ABSTRACT;
+import static javax.lang.model.element.Modifier.PRIVATE;
+import static javax.lang.model.element.Modifier.STATIC;
+import static javax.lang.model.util.ElementFilter.methodsIn;
+
+import com.google.auto.common.MoreElements;
 import com.google.auto.common.MoreTypes;
-import com.google.common.base.Equivalence;
-import com.google.common.collect.Iterables;
-import com.google.common.collect.LinkedHashMultimap;
-import com.google.common.collect.Multimap;
+import com.google.common.collect.ImmutableSet;
+import dagger.internal.codegen.ErrorMessages.ComponentBuilderMessages;
+import dagger.internal.codegen.ValidationReport.Builder;
 import java.lang.annotation.Annotation;
-import java.util.Collection;
+import java.util.Arrays;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import javax.lang.model.element.Element;
 import javax.lang.model.element.ExecutableElement;
@@ -36,19 +45,13 @@ import javax.lang.model.util.ElementFilter;
 import javax.lang.model.util.Elements;
 import javax.lang.model.util.Types;
 
-import static com.google.auto.common.MoreElements.isAnnotationPresent;
-import static com.google.common.base.Preconditions.checkArgument;
-import static com.google.common.collect.Iterables.getOnlyElement;
-import static javax.lang.model.element.Modifier.ABSTRACT;
-import static javax.lang.model.element.Modifier.PRIVATE;
-import static javax.lang.model.element.Modifier.STATIC;
-
 /**
  * Validates {@link dagger.Component.Builder} annotations.
  *
  * @author sameb@google.com (Sam Berlin)
  */
 class BuilderValidator {
+
   private final Elements elements;
   private final Types types;
 
@@ -106,22 +109,34 @@ class BuilderValidator {
     }
 
     ExecutableElement buildMethod = null;
-    Multimap<Equivalence.Wrapper<TypeMirror>, ExecutableElement> methodsPerParam =
-        LinkedHashMultimap.create();
-    for (ExecutableElement method : Util.getUnimplementedMethods(elements, subject)) {
+    for (ExecutableElement method : getUnimplementedMethods(subject, types, elements)) {
       ExecutableType resolvedMethodType =
           MoreTypes.asExecutable(types.asMemberOf(MoreTypes.asDeclared(subject.asType()), method));
       TypeMirror returnType = resolvedMethodType.getReturnType();
       if (method.getParameters().size() == 0) {
         // If this is potentially a build() method, validate it returns the correct type.
-        if (types.isSameType(returnType, componentElement.asType())) {
+        if (types.isSubtype(componentElement.asType(), returnType)) {
+          validateBuildMethodReturnType(
+              builder,
+              // since types.isSubtype() passed, componentElement cannot be a PackageElement
+              MoreElements.asType(componentElement),
+              msgs,
+              method,
+              returnType);
           if (buildMethod != null) {
             // If we found more than one build-like method, fail.
-            error(builder, method, msgs.twoBuildMethods(), msgs.inheritedTwoBuildMethods(),
+            error(
+                builder,
+                method,
+                msgs.twoBuildMethods(),
+                msgs.inheritedTwoBuildMethods(),
                 buildMethod);
           }
         } else {
-          error(builder, method, msgs.buildMustReturnComponentType(),
+          error(
+              builder,
+              method,
+              msgs.buildMustReturnComponentType(),
               msgs.inheritedBuildMustReturnComponentType());
         }
         // We set the buildMethod regardless of the return type to reduce error spam.
@@ -132,18 +147,16 @@ class BuilderValidator {
       } else if (returnType.getKind() != TypeKind.VOID
           && !types.isSubtype(subject.asType(), returnType)) {
         // If this correctly had one arg, make sure the return types are valid.
-        error(builder, method, msgs.methodsMustReturnVoidOrBuilder(),
+        error(
+            builder,
+            method,
+            msgs.methodsMustReturnVoidOrBuilder(),
             msgs.inheritedMethodsMustReturnVoidOrBuilder());
-      } else {
-        // If the return types are valid, record the method.
-        methodsPerParam.put(
-            MoreTypes.equivalence().<TypeMirror>wrap(
-                Iterables.getOnlyElement(resolvedMethodType.getParameterTypes())),
-            method);
-      }
-
-      if (!method.getTypeParameters().isEmpty()) {
-        error(builder, method, msgs.methodsMayNotHaveTypeParameters(),
+      } else if (!method.getTypeParameters().isEmpty()) {
+        error(
+            builder,
+            method,
+            msgs.methodsMayNotHaveTypeParameters(),
             msgs.inheritedMethodsMayNotHaveTypeParameters());
       }
     }
@@ -152,20 +165,30 @@ class BuilderValidator {
       builder.addError(msgs.missingBuildMethod(), subject);
     }
 
-    // Go back through each recorded method per param type.  If we had more than one method
-    // for a given param, fail.
-    for (Map.Entry<Equivalence.Wrapper<TypeMirror>, Collection<ExecutableElement>> entry :
-        methodsPerParam.asMap().entrySet()) {
-      if (entry.getValue().size() > 1) {
-        TypeMirror type = entry.getKey().get();
-        builder.addError(String.format(msgs.manyMethodsForType(), type, entry.getValue()), subject);
-      }
-    }
-
-    // Note: there's more validation in BindingGraphValidator,
-    // specifically to make sure the setter methods mirror the deps.
+    // Note: there's more validation in BindingGraphValidator:
+    // - to make sure the setter methods mirror the deps
+    // - to make sure each type or key is set by only one method
 
     return builder.build();
+  }
+
+  private void validateBuildMethodReturnType(
+      ValidationReport.Builder<TypeElement> builder,
+      TypeElement componentElement,
+      ComponentBuilderMessages msgs,
+      ExecutableElement method,
+      TypeMirror returnType) {
+    if (types.isSameType(componentElement.asType(), returnType)) {
+      return;
+    }
+    ImmutableSet<ExecutableElement> methodsOnlyInComponent =
+        methodsOnlyInComponent(componentElement);
+    if (!methodsOnlyInComponent.isEmpty()) {
+      builder.addWarning(
+          msgs.buildMethodReturnsSupertypeWithMissingMethods(
+              componentElement, builder.getSubject(), returnType, method, methodsOnlyInComponent),
+          method);
+    }
   }
 
   /**
@@ -186,7 +209,7 @@ class BuilderValidator {
    * This check is a little more strict than necessary -- ideally we'd check if method's enclosing
    * class was included in this compile run.  But that's hard, and this is close enough.
    */
-  private void error(
+  private static void error(
       ValidationReport.Builder<TypeElement> builder,
       ExecutableElement method,
       String enclosedError,
@@ -195,10 +218,37 @@ class BuilderValidator {
     if (method.getEnclosingElement().equals(builder.getSubject())) {
       builder.addError(String.format(enclosedError, extraArgs), method);
     } else {
-      Object[] newArgs = new Object[extraArgs.length + 1];
-      newArgs[0] = method;
-      System.arraycopy(extraArgs, 0, newArgs, 1, extraArgs.length);
-      builder.addError(String.format(inheritedError, newArgs));
+      builder.addError(String.format(inheritedError, append(extraArgs, method)));
     }
+  }
+
+  /** @see #error(Builder, ExecutableElement, String, String, Object...) */
+  private static void warning(
+      ValidationReport.Builder<TypeElement> builder,
+      ExecutableElement method,
+      String enclosedWarning,
+      String inheritedWarning,
+      Object... extraArgs) {
+    if (method.getEnclosingElement().equals(builder.getSubject())) {
+      builder.addWarning(String.format(enclosedWarning, extraArgs), method);
+    } else {
+      builder.addWarning(String.format(inheritedWarning, append(extraArgs, method)), method);
+    }
+  }
+
+  private static Object[] append(Object[] initial, Object additional) {
+    Object[] newArray = Arrays.copyOf(initial, initial.length + 1);
+    newArray[initial.length] = additional;
+    return newArray;
+  }
+
+  /**
+   * Returns all methods defind in {@code componentType} which are not inherited from a supertype.
+   */
+  private ImmutableSet<ExecutableElement> methodsOnlyInComponent(TypeElement componentType) {
+    // TODO(ronshapiro): Ideally this shouldn't return methods which are redeclared from a
+    // supertype, but do not change the return type. We don't have a good/simple way of checking
+    // that, and it doesn't seem likely, so the warning won't be too bad.
+    return ImmutableSet.copyOf(methodsIn(componentType.getEnclosedElements()));
   }
 }

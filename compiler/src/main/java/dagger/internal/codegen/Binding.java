@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Google, Inc.
+ * Copyright (C) 2014 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,15 +13,29 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.internal.codegen;
 
+import static com.google.common.collect.Iterables.getOnlyElement;
+import static java.util.stream.Collectors.toList;
+import static javax.lang.model.element.Modifier.PUBLIC;
+
 import com.google.auto.common.MoreElements;
-import com.google.common.base.Optional;
+import com.google.auto.value.AutoValue;
+import com.google.auto.value.extension.memoized.Memoized;
+import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.ImmutableSetMultimap;
 import com.google.common.collect.Lists;
+import com.google.common.collect.Sets;
 import dagger.internal.codegen.BindingType.HasBindingType;
+import java.util.Collection;
+import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import javax.lang.model.element.Element;
 import javax.lang.model.element.Name;
@@ -35,8 +49,6 @@ import javax.lang.model.type.WildcardType;
 import javax.lang.model.util.SimpleTypeVisitor6;
 import javax.lang.model.util.Types;
 
-import static javax.lang.model.element.Modifier.PUBLIC;
-
 /**
  * An abstract type for classes representing a Dagger binding.  Particularly, contains the
  * {@link Element} that generated the binding and the {@link DependencyRequest} instances that are
@@ -48,27 +60,160 @@ import static javax.lang.model.element.Modifier.PUBLIC;
  */
 abstract class Binding extends BindingDeclaration implements HasBindingType {
 
-  /**
-   * Returns the framework class associated with this binding.
-   */
-  Class<?> frameworkClass() {
-    return bindingType().frameworkClass();
-  }
-
   /** The {@link Key} that is provided by this binding. */
   @Override
   public abstract Key key();
 
   /**
-   * The explicit set of {@link DependencyRequest dependencies} required to satisfy this binding.
+   * The explicit set of {@link DependencyRequest dependencies} required to satisfy this binding as
+   * defined by the user-defined injection sites.
    */
-  abstract ImmutableSet<DependencyRequest> dependencies();
+  abstract ImmutableSet<DependencyRequest> explicitDependencies();
 
   /**
-   * The set of {@link DependencyRequest dependencies} required to satisfy this binding. This is a
-   * superset of {@link #dependencies()}.  This returns an unmodifiable set.
+   * The set of {@link DependencyRequest dependencies} that are added by the framework rather than a
+   * user-defined injection site. This returns an unmodifiable set.
    */
-  abstract Set<DependencyRequest> implicitDependencies();
+  // TODO(gak): this will eventually get changed to return a set of FrameworkDependency
+  Set<DependencyRequest> implicitDependencies() {
+    return ImmutableSet.of();
+  }
+
+  /**
+   * The set of {@link DependencyRequest dependencies} required to satisfy this binding. This is the
+   * union of {@link #explicitDependencies()} and {@link #implicitDependencies()}. This returns an
+   * unmodifiable set.
+   */
+  final Set<DependencyRequest> dependencies() {
+    Set<DependencyRequest> implicitDependencies = implicitDependencies();
+    return implicitDependencies.isEmpty()
+        ? explicitDependencies()
+        : Sets.union(implicitDependencies, explicitDependencies());
+  }
+
+  /**
+   * The framework dependencies of {@code binding}. There will be one element for each different
+   * binding key in the <em>{@linkplain Binding#unresolved() unresolved}</em> version of {@code
+   * binding}.
+   *
+   * <p>For example, given the following modules:
+   *
+   * <pre><code>
+   *   {@literal @Module} abstract class {@literal BaseModule<T>} {
+   *     {@literal @Provides} Foo provideFoo(T t, String string) {
+   *       return …;
+   *     }
+   *   }
+   *
+   *   {@literal @Module} class StringModule extends {@literal BaseModule<String>} {}
+   * </code></pre>
+   *
+   * Both dependencies of {@code StringModule.provideFoo} have the same binding key: {@code String}.
+   * But there are still two dependencies, because in the unresolved binding they have different
+   * binding keys:
+   *
+   * <dl>
+   *   <dt>{@code T}
+   *   <dd>{@code String t}
+   *   <dt>{@code String}
+   *   <dd>{@code String string}
+   * </dl>
+   *
+   * <p>Note that the sets returned by this method when called on the same binding will be equal,
+   * and their elements will be in the same order.
+   */
+  /* TODO(dpb): The stable-order postcondition is actually hard to verify in code for two equal
+   * instances of Binding, because it really depends on the order of the binding's dependencies,
+   * and two equal instances of Binding may have the same dependencies in a different order. */
+  @Memoized
+  ImmutableList<FrameworkDependency> frameworkDependencies() {
+    return ImmutableList.copyOf(
+        dependencyAssociations()
+            .stream()
+            .map(DependencyAssociation::frameworkDependency)
+            .collect(toList()));
+  }
+
+  /**
+   * Associates a {@link FrameworkDependency} with the set of {@link DependencyRequest} instances
+   * that correlate for a binding.
+   */
+  @AutoValue
+  abstract static class DependencyAssociation {
+    abstract FrameworkDependency frameworkDependency();
+
+    abstract ImmutableSet<DependencyRequest> dependencyRequests();
+
+    static DependencyAssociation create(
+        FrameworkDependency frameworkDependency, Iterable<DependencyRequest> dependencyRequests) {
+      return new AutoValue_Binding_DependencyAssociation(
+          frameworkDependency, ImmutableSet.copyOf(dependencyRequests));
+    }
+  }
+
+  /**
+   * Returns the same {@link FrameworkDependency} instances from {@link #frameworkDependencies}, but
+   * with the set of {@link DependencyRequest} instances with which each is associated.
+   *
+   * <p>Ths method returns a list of {@link Map.Entry entries} rather than a {@link Map} or {@link
+   * com.google.common.collect.Multimap} because any given {@link FrameworkDependency} may appear
+   * multiple times if the {@linkplain Binding#unresolved() unresolved} binding requires it. If that
+   * distinction is not important, the entries can be merged into a single mapping.
+   */
+  @Memoized
+  ImmutableList<DependencyAssociation> dependencyAssociations() {
+    BindingTypeMapper bindingTypeMapper = BindingTypeMapper.forBindingType(bindingType());
+    ImmutableList.Builder<DependencyAssociation> frameworkDependencies = ImmutableList.builder();
+    for (Collection<DependencyRequest> requests : groupByUnresolvedKey()) {
+      frameworkDependencies.add(
+          DependencyAssociation.create(
+              FrameworkDependency.create(
+                  getOnlyElement(
+                      FluentIterable.from(requests)
+                          .transform(DependencyRequest::bindingKey)
+                          .toSet()),
+                  bindingTypeMapper.getBindingType(requests)),
+              requests));
+    }
+    return frameworkDependencies.build();
+  }
+
+  /**
+   * Returns the mapping from each {@linkplain #dependencies dependency} to its associated {@link
+   * FrameworkDependency}.
+   */
+  @Memoized
+  ImmutableMap<DependencyRequest, FrameworkDependency> dependenciesToFrameworkDependenciesMap() {
+    ImmutableMap.Builder<DependencyRequest, FrameworkDependency> frameworkDependencyMap =
+        ImmutableMap.builder();
+    for (DependencyAssociation dependencyAssociation : dependencyAssociations()) {
+      for (DependencyRequest dependencyRequest : dependencyAssociation.dependencyRequests()) {
+        frameworkDependencyMap.put(dependencyRequest, dependencyAssociation.frameworkDependency());
+      }
+    }
+    return frameworkDependencyMap.build();
+  }
+
+  /**
+   * Groups {@code binding}'s implicit dependencies by their binding key, using the dependency keys
+   * from the {@link Binding#unresolved()} binding if it exists.
+   */
+  private ImmutableList<Collection<DependencyRequest>> groupByUnresolvedKey() {
+    ImmutableSetMultimap.Builder<BindingKey, DependencyRequest> dependenciesByKeyBuilder =
+        ImmutableSetMultimap.builder();
+    Iterator<DependencyRequest> dependencies = dependencies().iterator();
+    Binding unresolved = unresolved().isPresent() ? unresolved().get() : this;
+    Iterator<DependencyRequest> unresolvedDependencies = unresolved.dependencies().iterator();
+    while (dependencies.hasNext()) {
+      dependenciesByKeyBuilder.put(unresolvedDependencies.next().bindingKey(), dependencies.next());
+    }
+    return ImmutableList.copyOf(
+        dependenciesByKeyBuilder
+            .orderValuesBy(SourceFiles.DEPENDENCY_ORDERING)
+            .build()
+            .asMap()
+            .values());
+  }
 
   /**
    * Returns the name of the package in which this binding must be managed. E.g.: a binding
@@ -78,7 +223,7 @@ abstract class Binding extends BindingDeclaration implements HasBindingType {
     Set<String> packages = nonPublicPackageUse(key().type());
     switch (packages.size()) {
       case 0:
-        return Optional.absent();
+        return Optional.empty();
       case 1:
         return Optional.of(packages.iterator().next());
       default:
@@ -128,7 +273,7 @@ abstract class Binding extends BindingDeclaration implements HasBindingType {
   }
 
   /**
-   * if this binding's key's type parameters are different from those of the
+   * If this binding's key's type parameters are different from those of the
    * {@link #bindingTypeElement()}, this is the binding for the {@link #bindingTypeElement()}'s
    * unresolved type.
    */
@@ -138,7 +283,7 @@ abstract class Binding extends BindingDeclaration implements HasBindingType {
    * The scope of this binding.
    */
   Optional<Scope> scope() {
-    return Optional.absent();
+    return Optional.empty();
   }
 
   // TODO(sameb): Remove the TypeElement parameter and pull it from the TypeMirror.

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 Google Inc.
+ * Copyright (C) 2015 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,4 +20,5 @@
  * <p>The interfaces in this package are not stable. Do not use these interfaces unless you are
  * prepared to be broken.
  */
+
 package dagger.producers.monitoring;

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Google, Inc.
+ * Copyright (C) 2014 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,15 +13,17 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.internal;
 
+import static dagger.internal.DaggerCollections.newLinkedHashMapWithExpectedSize;
+import static java.util.Collections.unmodifiableMap;
+
+import dagger.Lazy;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import javax.inject.Provider;
-
-import static dagger.internal.DaggerCollections.newLinkedHashMapWithExpectedSize;
-import static java.util.Collections.unmodifiableMap;
 
 /**
  * A {@link Factory} implementation used to implement {@link Map} bindings. This factory returns a
@@ -29,9 +31,9 @@ import static java.util.Collections.unmodifiableMap;
  *
  * @author Chenying Hou
  * @since 2.0
- *
  */
-public final class MapProviderFactory<K, V> implements Factory<Map<K, Provider<V>>> {
+public final class MapProviderFactory<K, V>
+    implements Factory<Map<K, Provider<V>>>, Lazy<Map<K, Provider<V>>> {
   private static final MapProviderFactory<Object, Object> EMPTY =
       new MapProviderFactory<Object, Object>(Collections.<Object, Provider<Object>>emptyMap());
 

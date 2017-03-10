@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 Google, Inc.
+ * Copyright (C) 2015 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.internal.codegen;
 
 import com.google.common.collect.ImmutableList;
@@ -39,10 +40,11 @@ class MissingBindingSuggestions {
       BindingGraph graph = graphsToTry.removeLast();
       ResolvedBindings bindings = graph.resolvedBindings().get(key);
       if ((bindings == null) || bindings.bindings().isEmpty()) {
-        graphsToTry.addAll(graph.subgraphs().values());
+        graphsToTry.addAll(graph.subgraphs());
       } else {
-        resolutions.add("A binding with matching key exists in component: "
-            + graph.componentDescriptor().componentDefinitionType().getQualifiedName());
+        resolutions.add(
+            "A binding with matching key exists in component: "
+                + graph.componentType().getQualifiedName());
       }
     } while (!graphsToTry.isEmpty());
 

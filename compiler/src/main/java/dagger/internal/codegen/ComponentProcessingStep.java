@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Google, Inc.
+ * Copyright (C) 2014 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.internal.codegen;
 
 import com.google.auto.common.BasicAnnotationProcessor.ProcessingStep;
@@ -102,7 +103,7 @@ final class ComponentProcessingStep implements ProcessingStep {
         getElementsFromAnnotations(
             elementsByAnnotation,
             FluentIterable.from(componentKind.subcomponentKinds())
-                .transform(ComponentDescriptor.Kind.toBuilderAnnotationType())
+                .transform(ComponentDescriptor.Kind::builderAnnotationType)
                 .toSet());
     Map<Element, ValidationReport<TypeElement>> builderReportsBySubcomponent =
         processBuilders(subcomponentBuilderElements);
@@ -110,7 +111,7 @@ final class ComponentProcessingStep implements ProcessingStep {
         getElementsFromAnnotations(
             elementsByAnnotation,
             FluentIterable.from(componentKind.subcomponentKinds())
-                .transform(ComponentDescriptor.Kind.toAnnotationType())
+                .transform(ComponentDescriptor.Kind::annotationType)
                 .toSet());
     Map<Element, ValidationReport<TypeElement>> reportsBySubcomponent =
         processSubcomponents(subcomponentElements, subcomponentBuilderElements);
@@ -150,16 +151,12 @@ final class ComponentProcessingStep implements ProcessingStep {
   }
 
   private void generateComponent(BindingGraph bindingGraph) {
-    try {
-      componentGenerator.generate(bindingGraph);
-    } catch (SourceFileGenerationException e) {
-      e.printMessageTo(messager);
-    }
+    componentGenerator.generate(bindingGraph, messager);
   }
 
   private ImmutableSet<Element> getElementsFromAnnotations(
       final SetMultimap<Class<? extends Annotation>, Element> elementsByAnnotation,
-      ImmutableSet<Class<? extends Annotation>> annotations) {
+      ImmutableSet<? extends Class<? extends Annotation>> annotations) {
     return ImmutableSet.copyOf(
         Multimaps.filterKeys(elementsByAnnotation, Predicates.in(annotations)).values());
   }
@@ -191,9 +188,10 @@ final class ComponentProcessingStep implements ProcessingStep {
 
   /**
    * Returns true if the component's report is clean, its builder report is clean, and all
-   * referenced subcomponent reports & subcomponent builder reports are clean.
+   * referenced subcomponent reports and subcomponent builder reports are clean.
    */
-  private boolean isClean(ComponentValidationReport report,
+  private boolean isClean(
+      ComponentValidationReport report,
       Map<Element, ValidationReport<TypeElement>> builderReportsByComponent,
       Map<Element, ValidationReport<TypeElement>> reportsBySubcomponent,
       Map<Element, ValidationReport<TypeElement>> builderReportsBySubcomponent) {

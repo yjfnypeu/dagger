@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Google, Inc.
+ * Copyright (C) 2014 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,17 +13,24 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.internal.codegen;
 
+import static com.google.auto.common.MoreElements.isAnnotationPresent;
+import static com.google.common.base.Preconditions.checkNotNull;
+import static javax.lang.model.util.ElementFilter.constructorsIn;
+
 import com.google.auto.common.AnnotationMirrors;
-import com.google.common.base.Optional;
+import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableSet;
+import java.util.Optional;
+import javax.inject.Inject;
 import javax.inject.Qualifier;
 import javax.inject.Scope;
 import javax.lang.model.element.AnnotationMirror;
 import javax.lang.model.element.Element;
-
-import static com.google.common.base.Preconditions.checkNotNull;
+import javax.lang.model.element.ExecutableElement;
+import javax.lang.model.element.TypeElement;
 
 /**
  * Utilities relating to annotations defined in the {@code javax.inject} package.
@@ -37,7 +44,7 @@ final class InjectionAnnotations {
     ImmutableSet<? extends AnnotationMirror> qualifierAnnotations = getQualifiers(e);
     switch (qualifierAnnotations.size()) {
       case 0:
-        return Optional.absent();
+        return Optional.empty();
       case 1:
         return Optional.<AnnotationMirror>of(qualifierAnnotations.iterator().next());
       default:
@@ -52,6 +59,13 @@ final class InjectionAnnotations {
 
   static ImmutableSet<? extends AnnotationMirror> getScopes(Element element) {
     return AnnotationMirrors.getAnnotatedAnnotations(element, Scope.class);
+  }
+
+  /** Returns the constructors in {@code type} that are annotated with {@link Inject}. */
+  static ImmutableSet<ExecutableElement> injectedConstructors(TypeElement type) {
+    return FluentIterable.from(constructorsIn(type.getEnclosedElements()))
+        .filter(constructor -> isAnnotationPresent(constructor, Inject.class))
+        .toSet();
   }
 
   private InjectionAnnotations() {}

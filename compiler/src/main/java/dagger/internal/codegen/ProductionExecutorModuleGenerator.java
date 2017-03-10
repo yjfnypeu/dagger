@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Google, Inc.
+ * Copyright (C) 2016 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,9 +13,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.internal.codegen;
 
-import com.google.common.base.Optional;
+import static com.squareup.javapoet.MethodSpec.methodBuilder;
+import static com.squareup.javapoet.TypeSpec.classBuilder;
+import static javax.lang.model.element.Modifier.FINAL;
+import static javax.lang.model.element.Modifier.STATIC;
+
 import com.squareup.javapoet.AnnotationSpec;
 import com.squareup.javapoet.ClassName;
 import com.squareup.javapoet.ParameterSpec;
@@ -25,18 +30,12 @@ import dagger.Provides;
 import dagger.producers.Production;
 import dagger.producers.ProductionScope;
 import dagger.producers.internal.ProductionImplementation;
-
+import java.util.Optional;
 import java.util.concurrent.Executor;
-
 import javax.annotation.processing.Filer;
 import javax.lang.model.element.Element;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.util.Elements;
-
-import static com.squareup.javapoet.MethodSpec.methodBuilder;
-import static com.squareup.javapoet.TypeSpec.classBuilder;
-import static javax.lang.model.element.Modifier.STATIC;
-import static javax.lang.model.element.Modifier.FINAL;
 
 /** Generates a producer executor module for use with production components. */
 // TODO(beder): Replace this with a single class when the producers client library exists.

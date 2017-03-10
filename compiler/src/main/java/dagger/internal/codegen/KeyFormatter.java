@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Google, Inc.
+ * Copyright (C) 2014 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,34 +13,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.internal.codegen;
 
-/**
- * Formats a {@link Key} into a {@link String} suitable for use in error messages and JSON keys.
- *
- * @author Christian Gruber
- * @since 2.0
- */
+/** Formats a {@link Key} into a {@link String} suitable for use in error messages. */
 final class KeyFormatter extends Formatter<Key> {
-  
-  final MethodSignatureFormatter methodSignatureFormatter;
-
-  KeyFormatter(MethodSignatureFormatter methodSignatureFormatter) {
-    this.methodSignatureFormatter = methodSignatureFormatter;
-  }
-
   @Override
   public String format(Key key) {
-    if (key.bindingMethodIdentifier().isPresent()) {
-      // If there's a binding method, its signature is enough.
-      return methodSignatureFormatter.format(key.bindingMethodIdentifier().get());
-    }
-    StringBuilder builder = new StringBuilder();
-    if (key.qualifier().isPresent()) {
-      builder.append(key.qualifier().get());
-      builder.append(' ');
-    }
-    builder.append(key.type());
-    return builder.toString();
+    return key.toString();
   }
 }

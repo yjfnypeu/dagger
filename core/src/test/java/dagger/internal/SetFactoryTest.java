@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Google, Inc.
+ * Copyright (C) 2014 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.internal;
+
+import static com.google.common.truth.Truth.assertThat;
 
 import com.google.common.collect.ImmutableSet;
 import java.util.Arrays;
@@ -27,8 +30,6 @@ import org.junit.rules.ExpectedException;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
-import static com.google.common.truth.Truth.assertThat;
-
 @RunWith(JUnit4.class)
 @SuppressWarnings("unchecked")
 public class SetFactoryTest {
@@ -37,7 +38,7 @@ public class SetFactoryTest {
   @Test
   public void providerReturnsNull() {
     Factory<Set<Integer>> factory =
-        SetFactory.<Integer>builder(0, 1).addCollectionProvider(providerOf((Set<Integer>) null)).build();
+        SetFactory.<Integer>builder(0, 1).addCollectionProvider(() -> null).build();
     thrown.expect(NullPointerException.class);
     factory.get();
   }
@@ -45,16 +46,16 @@ public class SetFactoryTest {
   @Test
   public void providerReturnsNullSet() {
     Factory<Set<Integer>> factory =
-        SetFactory.<Integer>builder(1, 0).addProvider(providerOf((Integer) null)).build();
+        SetFactory.<Integer>builder(1, 0).addProvider(() -> null).build();
     thrown.expect(NullPointerException.class);
     factory.get();
   }
 
   @Test
   public void providerReturnsSetWithNullElement() {
-    Set<Integer> set = new LinkedHashSet<Integer>(Arrays.asList(1, null, 3));
+    Set<Integer> set = new LinkedHashSet<>(Arrays.asList(1, null, 3));
     Factory<Set<Integer>> factory =
-        SetFactory.<Integer>builder(0, 1).addCollectionProvider(providerOf(set)).build();
+        SetFactory.<Integer>builder(0, 1).addCollectionProvider(() -> set).build();
     thrown.expect(NullPointerException.class);
     factory.get();
   }
@@ -73,32 +74,13 @@ public class SetFactoryTest {
     assertThat(factory.get()).containsExactly(2, 12, 24, 25, 34, 35);
   }
 
-  private static <T> Provider<T> providerOf(final T value) {
-    return new Provider<T>() {
-      @Override
-      public T get() {
-        return value;
-      }
-    };
-  }
-
   private static Provider<Integer> incrementingIntegerProvider(int seed) {
     final AtomicInteger value = new AtomicInteger(seed);
-    return new Provider<Integer>() {
-      @Override
-      public Integer get() {
-        return value.getAndIncrement();
-      }
-    };
+    return value::getAndIncrement;
   }
 
   private static Provider<Set<Integer>> incrementingIntegerSetProvider(int seed) {
     final AtomicInteger value = new AtomicInteger(seed);
-    return new Provider<Set<Integer>>() {
-      @Override
-      public Set<Integer> get() {
-        return ImmutableSet.of(value.getAndIncrement(), value.getAndIncrement());
-      }
-    };
+    return () -> ImmutableSet.of(value.getAndIncrement(), value.getAndIncrement());
   }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Google, Inc.
+ * Copyright (C) 2014 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.internal;
+
+import static com.google.common.truth.Truth.assertThat;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -24,8 +27,6 @@ import org.junit.Test;
 import org.junit.rules.ExpectedException;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
-
-import static com.google.common.truth.Truth.assert_;
 
 @RunWith(JUnit4.class)
 @SuppressWarnings("unchecked")
@@ -62,25 +63,18 @@ public class MapProviderFactoryTest {
         .put("four", p4)
         .build();
 
-    Map<String, Provider<Integer>> expectedMap = new LinkedHashMap<String, Provider<Integer>>();
+    Map<String, Provider<Integer>> expectedMap = new LinkedHashMap<>();
     expectedMap.put("two", p2);
     expectedMap.put("one", p1);
     expectedMap.put("three", p3);
     expectedMap.put("one", p5);
     expectedMap.put("four", p4);
-    assert_()
-        .that(factory.get().entrySet())
+    assertThat(factory.get().entrySet())
         .containsExactlyElementsIn(expectedMap.entrySet())
         .inOrder();
   }
 
   private static Provider<Integer> incrementingIntegerProvider(int seed) {
-    final AtomicInteger value = new AtomicInteger(seed);
-    return new Provider<Integer>() {
-      @Override
-      public Integer get() {
-        return value.getAndIncrement();
-      }
-    };
+    return new AtomicInteger(seed)::getAndIncrement;
   }
 }

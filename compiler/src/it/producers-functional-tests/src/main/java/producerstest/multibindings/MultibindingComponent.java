@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Google, Inc.
+ * Copyright (C) 2016 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package producerstest.multibindings;
 
 import com.google.common.util.concurrent.ListenableFuture;
@@ -22,7 +23,10 @@ import dagger.producers.ProductionComponent;
 import java.util.Map;
 import java.util.Set;
 import producerstest.ExecutorModule;
+import producerstest.multibindings.Qualifiers.EmptyButDeclaredInModule;
+import producerstest.multibindings.Qualifiers.EmptyButDeclaredInModuleAndProducerModule;
 import producerstest.multibindings.Qualifiers.ObjCount;
+import producerstest.multibindings.Qualifiers.OnlyProvisionMultibindings;
 import producerstest.multibindings.Qualifiers.PossiblyThrowingMap;
 import producerstest.multibindings.Qualifiers.PossiblyThrowingSet;
 
@@ -65,4 +69,13 @@ interface MultibindingComponent {
 
   @ObjCount
   ListenableFuture<Integer> objCount();
+
+  @EmptyButDeclaredInModuleAndProducerModule
+  ListenableFuture<Map<String, Object>> emptyButDeclaredInModuleAndProducerModule();
+
+  @EmptyButDeclaredInModule
+  ListenableFuture<Map<String, Object>> emptyButDeclaredInModule();
+
+  @OnlyProvisionMultibindings
+  ListenableFuture<Map<String, Object>> onlyProvisionMultibindings();
 }

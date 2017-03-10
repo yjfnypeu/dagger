@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Google, Inc.
+ * Copyright (C) 2014 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.producers.internal;
+
+import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.common.util.concurrent.Futures.catchingAsync;
+import static com.google.common.util.concurrent.Futures.transform;
+import static com.google.common.util.concurrent.MoreExecutors.directExecutor;
 
 import com.google.common.base.Function;
 import com.google.common.collect.ImmutableSet;
@@ -22,10 +28,9 @@ import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import dagger.producers.Produced;
 import dagger.producers.Producer;
+import java.util.List;
 import java.util.Set;
 import javax.inject.Provider;
-
-import static com.google.common.base.Preconditions.checkNotNull;
 
 /**
  * Utility methods for use in generated producer code.
@@ -47,17 +52,19 @@ public final class Producers {
   // TODO(beder): Document what happens with an InterruptedException after you figure out how to
   // trigger one in a test.
   public static <T> ListenableFuture<Produced<T>> createFutureProduced(ListenableFuture<T> future) {
-    return Futures.catchingAsync(
-        Futures.transform(
+    return catchingAsync(
+        transform(
             future,
             new Function<T, Produced<T>>() {
               @Override
               public Produced<T> apply(final T value) {
                 return Produced.successful(value);
               }
-            }),
+            },
+            directExecutor()),
         Throwable.class,
-        Producers.<T>futureFallbackForProduced());
+        Producers.<T>futureFallbackForProduced(),
+        directExecutor());
 
   }
 
@@ -80,11 +87,34 @@ public final class Producers {
    * future.
    */
   public static <T> ListenableFuture<Set<T>> createFutureSingletonSet(ListenableFuture<T> future) {
-    return Futures.transform(future, new Function<T, Set<T>>() {
-      @Override public Set<T> apply(T value) {
-        return ImmutableSet.of(value);
-      }
-    });
+    return transform(
+        future,
+        new Function<T, Set<T>>() {
+          @Override
+          public Set<T> apply(T value) {
+            return ImmutableSet.of(value);
+          }
+        },
+        directExecutor());
+  }
+
+  /**
+   * Creates a new {@code ListenableFuture} whose value is a set containing the values of all its
+   * input futures, if all succeed. If any input fails, the returned future fails immediately.
+   *
+   * <p>This is the set equivalent of {@link Futures#allAsList}.
+   */
+  public static <T> ListenableFuture<Set<T>> allAsSet(
+      Iterable<? extends ListenableFuture<? extends T>> futures) {
+    return transform(
+        Futures.allAsList(futures),
+        new Function<List<T>, Set<T>>() {
+          @Override
+          public Set<T> apply(List<T> values) {
+            return ImmutableSet.copyOf(values);
+          }
+        },
+        directExecutor());
   }
 
   /**

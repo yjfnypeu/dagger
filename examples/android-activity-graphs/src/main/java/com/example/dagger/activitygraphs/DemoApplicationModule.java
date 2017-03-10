@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013 Square, Inc.
+ * Copyright (C) 2013 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,15 +13,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package com.example.dagger.activitygraphs;
+
+import static android.content.Context.LOCATION_SERVICE;
 
 import android.app.Application;
 import android.location.LocationManager;
 import dagger.Module;
 import dagger.Provides;
 import javax.inject.Singleton;
-
-import static android.content.Context.LOCATION_SERVICE;
 
 /**
  * A module for Android-specific dependencies which require a {@link Context} or

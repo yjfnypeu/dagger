@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 Google, Inc.
+ * Copyright (C) 2015 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,18 +13,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package dagger.internal.codegen;
 
-import com.google.common.base.Optional;
-import com.google.common.collect.ImmutableListMultimap;
-import dagger.Module;
-import dagger.Multibindings;
-import dagger.producers.ProducerModule;
-import java.util.Collection;
-import java.util.Map;
-import javax.lang.model.element.ExecutableElement;
-import javax.lang.model.element.TypeElement;
-import javax.lang.model.util.Elements;
+package dagger.internal.codegen;
 
 import static com.google.auto.common.MoreElements.getLocalAndInheritedMethods;
 import static com.google.auto.common.MoreElements.isAnnotationPresent;
@@ -36,37 +26,66 @@ import static dagger.internal.codegen.ErrorMessages.MultibindingsMessages.MUST_N
 import static dagger.internal.codegen.ErrorMessages.MultibindingsMessages.tooManyMethodsForKey;
 import static javax.lang.model.element.ElementKind.INTERFACE;
 
+import com.google.common.collect.ImmutableListMultimap;
+import dagger.Module;
+import dagger.Multibindings;
+import dagger.producers.ProducerModule;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Optional;
+import javax.lang.model.element.ExecutableElement;
+import javax.lang.model.element.TypeElement;
+import javax.lang.model.util.Elements;
+import javax.lang.model.util.Types;
+
 /**
  * A {@linkplain ValidationReport validator} for {@link Multibindings @Multibindings}-annotated
  * types.
  */
 final class MultibindingsValidator {
   private final Elements elements;
+  private final Types types;
   private final Key.Factory keyFactory;
   private final KeyFormatter keyFormatter;
   private final MethodSignatureFormatter methodSignatureFormatter;
   private final TypeElement objectElement;
   private final MultibindingsMethodValidator multibindingsMethodValidator;
+  private final Map<TypeElement, ValidationReport<TypeElement>> reports = new HashMap<>();
 
   MultibindingsValidator(
       Elements elements,
+      Types types,
       Key.Factory keyFactory,
       KeyFormatter keyFormatter,
       MethodSignatureFormatter methodSignatureFormatter,
       MultibindingsMethodValidator multibindingsMethodValidator) {
     this.elements = elements;
+    this.types = types;
     this.keyFactory = keyFactory;
     this.keyFormatter = keyFormatter;
     this.methodSignatureFormatter = methodSignatureFormatter;
     this.multibindingsMethodValidator = multibindingsMethodValidator;
     this.objectElement = elements.getTypeElement(Object.class.getCanonicalName());
   }
-
+  
   /**
-   * Returns a report containing validation errors for a
-   * {@link Multibindings @Multibindings}-annotated type.
+   * Returns a report containing validation errors for a {@link
+   * Multibindings @Multibindings}-annotated type.
    */
   public ValidationReport<TypeElement> validate(TypeElement multibindingsType) {
+    return reports.computeIfAbsent(multibindingsType, this::validateUncached);
+  }
+
+  /**
+   * Returns {@code true} if {@code multibindingsType} was already {@linkplain
+   * #validate(TypeElement) validated}.
+   */
+  boolean wasAlreadyValidated(TypeElement multibindingsType) {
+    return reports.containsKey(multibindingsType);
+  }
+
+  private ValidationReport<TypeElement> validateUncached(TypeElement multibindingsType) {
     ValidationReport.Builder<TypeElement> validation = ValidationReport.about(multibindingsType);
     if (!multibindingsType.getKind().equals(INTERFACE)) {
       validation.addError(MUST_BE_INTERFACE, multibindingsType);
@@ -81,7 +100,8 @@ final class MultibindingsValidator {
 
     ImmutableListMultimap.Builder<Key, ExecutableElement> methodsByKey =
         ImmutableListMultimap.builder();
-    for (ExecutableElement method : getLocalAndInheritedMethods(multibindingsType, elements)) {
+    for (ExecutableElement method :
+        getLocalAndInheritedMethods(multibindingsType, types, elements)) {
       // Skip methods in Object.
       if (method.getEnclosingElement().equals(objectElement)) {
         continue;
@@ -116,13 +136,13 @@ final class MultibindingsValidator {
     return builder.toString();
   }
 
-  private Optional<BindingType> bindingType(TypeElement multibindingsType) {
+  private static Optional<BindingType> bindingType(TypeElement multibindingsType) {
     if (isAnnotationPresent(multibindingsType.getEnclosingElement(), Module.class)) {
       return Optional.of(BindingType.PROVISION);
     } else if (isAnnotationPresent(multibindingsType.getEnclosingElement(), ProducerModule.class)) {
       return Optional.of(BindingType.PRODUCTION);
     } else {
-      return Optional.<BindingType>absent();
+      return Optional.empty();
     }
   }
 }

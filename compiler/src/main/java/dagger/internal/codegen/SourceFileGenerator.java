@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Google, Inc.
+ * Copyright (C) 2014 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,28 +13,22 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.internal.codegen;
 
-import com.google.common.base.Optional;
+import static com.google.common.base.Preconditions.checkNotNull;
+
 import com.google.common.base.Throwables;
-import com.google.common.collect.Iterables;
-import com.google.common.io.CharSink;
-import com.google.common.io.CharSource;
-import com.google.googlejavaformat.java.Formatter;
-import com.google.googlejavaformat.java.FormatterException;
 import com.squareup.javapoet.AnnotationSpec;
 import com.squareup.javapoet.ClassName;
 import com.squareup.javapoet.JavaFile;
 import com.squareup.javapoet.TypeSpec;
-import java.io.IOException;
-import java.io.Writer;
+import java.util.Optional;
 import javax.annotation.Generated;
 import javax.annotation.processing.Filer;
+import javax.annotation.processing.Messager;
 import javax.lang.model.element.Element;
 import javax.lang.model.util.Elements;
-import javax.tools.JavaFileObject;
-
-import static com.google.common.base.Preconditions.checkNotNull;
 
 /**
  * A template class that provides a framework for properly handling IO while generating source files
@@ -60,37 +54,33 @@ abstract class SourceFileGenerator<T> {
     generatedAnnotationAvailable = elements.getTypeElement("javax.annotation.Generated") != null;
   }
 
+  /**
+   * Generates a source file to be compiled for {@code T}. Writes any generation exception to {@code
+   * messager} and does not throw.
+   */
+  void generate(T input, Messager messager) {
+    try {
+      generate(input);
+    } catch (SourceFileGenerationException e) {
+      e.printMessageTo(messager);
+    }
+  }
+
   /** Generates a source file to be compiled for {@code T}. */
   void generate(T input) throws SourceFileGenerationException {
     ClassName generatedTypeName = nameGeneratedType(input);
+    Optional<TypeSpec.Builder> type = write(generatedTypeName, input);
+    if (!type.isPresent()) {
+      return;
+    }
     try {
-      Optional<TypeSpec.Builder> type = write(generatedTypeName, input);
-      if (!type.isPresent()) {
-        return;
-      }
-      JavaFile javaFile = buildJavaFile(generatedTypeName, type.get());
-
-      final JavaFileObject sourceFile = filer.createSourceFile(
-          generatedTypeName.toString(),
-          Iterables.toArray(javaFile.typeSpec.originatingElements, Element.class));
-      try {
-        new Formatter().formatSource(
-            CharSource.wrap(javaFile.toString()),
-            new CharSink() {
-              @Override public Writer openStream() throws IOException {
-                return sourceFile.openWriter();
-              }
-            });
-      } catch (FormatterException e) {
-        throw new SourceFileGenerationException(
-            Optional.of(generatedTypeName), e, getElementForErrorReporting(input));
-      }
+      buildJavaFile(generatedTypeName, type.get()).writeTo(filer);
     } catch (Exception e) {
       // if the code above threw a SFGE, use that
       Throwables.propagateIfPossible(e, SourceFileGenerationException.class);
       // otherwise, throw a new one
       throw new SourceFileGenerationException(
-          Optional.<ClassName>absent(), e, getElementForErrorReporting(input));
+          Optional.empty(), e, getElementForErrorReporting(input));
     }
   }
 
@@ -122,7 +112,7 @@ abstract class SourceFileGenerator<T> {
 
   /**
    * Returns a {@link TypeSpec.Builder type} to be generated for {@code T}, or {@link
-   * Optional#absent()} if no file should be generated.
+   * Optional#empty()} if no file should be generated.
    */
   // TODO(ronshapiro): write() makes more sense in JavaWriter where all writers are mutable.
   // consider renaming to something like typeBuilder() which conveys the mutability of the result

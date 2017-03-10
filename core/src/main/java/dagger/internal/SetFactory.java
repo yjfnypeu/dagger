@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Google, Inc.
+ * Copyright (C) 2014 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,13 +13,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package dagger.internal;
 
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.List;
-import java.util.Set;
-import javax.inject.Provider;
+package dagger.internal;
 
 import static dagger.internal.DaggerCollections.hasDuplicates;
 import static dagger.internal.DaggerCollections.newHashSetWithExpectedSize;
@@ -27,6 +22,12 @@ import static dagger.internal.DaggerCollections.presizedList;
 import static dagger.internal.Preconditions.checkNotNull;
 import static java.util.Collections.emptySet;
 import static java.util.Collections.unmodifiableSet;
+
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
+import java.util.Set;
+import javax.inject.Provider;
 
 /**
  * A {@link Factory} implementation used to implement {@link Set} bindings. This factory always
@@ -37,13 +38,7 @@ import static java.util.Collections.unmodifiableSet;
  * @since 2.0
  */
 public final class SetFactory<T> implements Factory<Set<T>> {
-  private static final Factory<Set<Object>> EMPTY_FACTORY =
-      new Factory<Set<Object>>() {
-        @Override
-        public Set<Object> get() {
-          return emptySet();
-        }
-      };
+  private static final Factory<Set<Object>> EMPTY_FACTORY = InstanceFactory.create(emptySet());
 
   @SuppressWarnings({"unchecked", "rawtypes"}) // safe covariant cast
   public static <T> Factory<Set<T>> empty() {

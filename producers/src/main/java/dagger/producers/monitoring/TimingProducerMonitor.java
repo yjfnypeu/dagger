@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 Google, Inc.
+ * Copyright (C) 2015 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,12 +13,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.producers.monitoring;
+
+import static java.util.concurrent.TimeUnit.NANOSECONDS;
 
 import com.google.common.base.Stopwatch;
 import com.google.common.base.Ticker;
-
-import static java.util.concurrent.TimeUnit.NANOSECONDS;
 
 /**
  * A monitor that measures the timing of the execution of a producer method, and logs those timings

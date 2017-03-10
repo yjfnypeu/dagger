@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 Google, Inc.
+ * Copyright (C) 2015 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,11 +13,18 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.internal.codegen;
 
-import com.google.common.base.Function;
+import static com.squareup.javapoet.MethodSpec.methodBuilder;
+import static com.squareup.javapoet.TypeSpec.classBuilder;
+import static dagger.internal.codegen.TypeSpecs.addSupertype;
+import static dagger.internal.codegen.Util.requiresAPassedInstance;
+import static javax.lang.model.element.Modifier.FINAL;
+import static javax.lang.model.element.Modifier.PUBLIC;
+import static javax.lang.model.element.Modifier.STATIC;
+
 import com.google.common.base.Joiner;
-import com.google.common.base.Predicate;
 import com.google.common.base.Splitter;
 import com.google.common.collect.ImmutableBiMap;
 import com.google.common.collect.ImmutableListMultimap;
@@ -32,17 +39,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import javax.lang.model.element.Name;
-import javax.lang.model.element.TypeElement;
 import javax.lang.model.util.Elements;
 import javax.lang.model.util.Types;
-
-import static com.squareup.javapoet.MethodSpec.methodBuilder;
-import static com.squareup.javapoet.TypeSpec.classBuilder;
-import static dagger.internal.codegen.TypeSpecs.addSupertype;
-import static dagger.internal.codegen.Util.requiresAPassedInstance;
-import static javax.lang.model.element.Modifier.FINAL;
-import static javax.lang.model.element.Modifier.PUBLIC;
-import static javax.lang.model.element.Modifier.STATIC;
 
 /**
  * Creates the implementation class for a component.
@@ -63,7 +61,8 @@ final class ComponentWriter extends AbstractComponentWriter {
         compilerOptions,
         name,
         graph,
-        new UniqueSubcomponentNamesGenerator(graph).generate());
+        new UniqueSubcomponentNamesGenerator(graph).generate(),
+        new OptionalFactories());
   }
 
   /**
@@ -85,12 +84,8 @@ final class ComponentWriter extends AbstractComponentWriter {
       componentDescriptorsBySimpleName =
           Multimaps.index(
               graph.componentDescriptors(),
-              new Function<ComponentDescriptor, String>() {
-                @Override
-                public String apply(ComponentDescriptor componentDescriptor) {
-                  return componentDescriptor.componentDefinitionType().getSimpleName().toString();
-                }
-              });
+              componentDescriptor ->
+                  componentDescriptor.componentDefinitionType().getSimpleName().toString());
       componentQualifiedNamePieces = qualifiedNames(graph.componentDescriptors());
     }
 
@@ -141,10 +136,9 @@ final class ComponentWriter extends AbstractComponentWriter {
   }
 
   @Override
-  protected TypeSpec.Builder createComponentClass() {
-    TypeSpec.Builder component = classBuilder(name).addModifiers(PUBLIC, FINAL);
-    addSupertype(component, componentDefinitionType());
-    return component;
+  protected void decorateComponent() {
+    component.addModifiers(PUBLIC, FINAL);
+    addSupertype(component, graph.componentType());
   }
 
   @Override
@@ -188,7 +182,7 @@ final class ComponentWriter extends AbstractComponentWriter {
           methodBuilder("create")
               .returns(componentDefinitionTypeName())
               .addModifiers(PUBLIC, STATIC)
-              .addStatement("return builder().$L()", buildMethodName)
+              .addStatement("return new Builder().$L()", buildMethodName)
               .build());
     }
   }
@@ -197,11 +191,6 @@ final class ComponentWriter extends AbstractComponentWriter {
   private boolean canInstantiateAllRequirements() {
     return !Iterables.any(
         graph.componentRequirements(),
-        new Predicate<TypeElement>() {
-          @Override
-          public boolean apply(TypeElement dependency) {
-            return requiresAPassedInstance(elements, dependency);
-          }
-        });
+        dependency -> requiresAPassedInstance(elements, types, dependency.typeElement()));
   }
 }

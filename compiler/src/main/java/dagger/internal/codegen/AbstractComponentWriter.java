@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 Google, Inc.
+ * Copyright (C) 2015 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,12 +13,70 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.internal.codegen;
+
+import static com.google.common.base.CaseFormat.LOWER_CAMEL;
+import static com.google.common.base.CaseFormat.UPPER_CAMEL;
+import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.base.Preconditions.checkState;
+import static com.google.common.base.Verify.verify;
+import static com.google.common.collect.Iterables.getOnlyElement;
+import static com.squareup.javapoet.MethodSpec.constructorBuilder;
+import static com.squareup.javapoet.MethodSpec.methodBuilder;
+import static com.squareup.javapoet.TypeSpec.anonymousClassBuilder;
+import static com.squareup.javapoet.TypeSpec.classBuilder;
+import static dagger.internal.codegen.AbstractComponentWriter.InitializationState.DELEGATED;
+import static dagger.internal.codegen.AbstractComponentWriter.InitializationState.INITIALIZED;
+import static dagger.internal.codegen.AbstractComponentWriter.InitializationState.UNINITIALIZED;
+import static dagger.internal.codegen.AnnotationSpecs.Suppression.RAWTYPES;
+import static dagger.internal.codegen.AnnotationSpecs.Suppression.UNCHECKED;
+import static dagger.internal.codegen.BindingKey.contribution;
+import static dagger.internal.codegen.CodeBlocks.makeParametersCodeBlock;
+import static dagger.internal.codegen.ContributionBinding.FactoryCreationStrategy.SINGLETON_INSTANCE;
+import static dagger.internal.codegen.ErrorMessages.CANNOT_RETURN_NULL_FROM_NON_NULLABLE_COMPONENT_METHOD;
+import static dagger.internal.codegen.MapKeys.getMapKeyExpression;
+import static dagger.internal.codegen.MemberSelect.emptyFrameworkMapFactory;
+import static dagger.internal.codegen.MemberSelect.emptySetProvider;
+import static dagger.internal.codegen.MemberSelect.localField;
+import static dagger.internal.codegen.MemberSelect.noOpMembersInjector;
+import static dagger.internal.codegen.MemberSelect.staticMethod;
+import static dagger.internal.codegen.MoreAnnotationMirrors.getTypeValue;
+import static dagger.internal.codegen.Scope.reusableScope;
+import static dagger.internal.codegen.SourceFiles.bindingTypeElementTypeVariableNames;
+import static dagger.internal.codegen.SourceFiles.generatedClassNameForBinding;
+import static dagger.internal.codegen.SourceFiles.membersInjectorNameForType;
+import static dagger.internal.codegen.SourceFiles.simpleVariableName;
+import static dagger.internal.codegen.TypeNames.DELEGATE_FACTORY;
+import static dagger.internal.codegen.TypeNames.DOUBLE_CHECK;
+import static dagger.internal.codegen.TypeNames.INSTANCE_FACTORY;
+import static dagger.internal.codegen.TypeNames.LISTENABLE_FUTURE;
+import static dagger.internal.codegen.TypeNames.MAP_FACTORY;
+import static dagger.internal.codegen.TypeNames.MAP_OF_PRODUCED_PRODUCER;
+import static dagger.internal.codegen.TypeNames.MAP_OF_PRODUCER_PRODUCER;
+import static dagger.internal.codegen.TypeNames.MAP_PRODUCER;
+import static dagger.internal.codegen.TypeNames.MAP_PROVIDER_FACTORY;
+import static dagger.internal.codegen.TypeNames.MEMBERS_INJECTORS;
+import static dagger.internal.codegen.TypeNames.PRODUCER;
+import static dagger.internal.codegen.TypeNames.REFERENCE_RELEASING_PROVIDER;
+import static dagger.internal.codegen.TypeNames.REFERENCE_RELEASING_PROVIDER_MANAGER;
+import static dagger.internal.codegen.TypeNames.SET_FACTORY;
+import static dagger.internal.codegen.TypeNames.SET_OF_PRODUCED_PRODUCER;
+import static dagger.internal.codegen.TypeNames.SET_PRODUCER;
+import static dagger.internal.codegen.TypeNames.SINGLE_CHECK;
+import static dagger.internal.codegen.TypeNames.TYPED_RELEASABLE_REFERENCE_MANAGER_DECORATOR;
+import static dagger.internal.codegen.TypeNames.providerOf;
+import static dagger.internal.codegen.TypeSpecs.addSupertype;
+import static javax.lang.model.element.Modifier.ABSTRACT;
+import static javax.lang.model.element.Modifier.FINAL;
+import static javax.lang.model.element.Modifier.PRIVATE;
+import static javax.lang.model.element.Modifier.PUBLIC;
+import static javax.lang.model.type.TypeKind.DECLARED;
+import static javax.lang.model.type.TypeKind.VOID;
 
 import com.google.auto.common.MoreElements;
 import com.google.auto.common.MoreTypes;
 import com.google.common.base.Joiner;
-import com.google.common.base.Optional;
 import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -31,14 +89,19 @@ import com.squareup.javapoet.ClassName;
 import com.squareup.javapoet.CodeBlock;
 import com.squareup.javapoet.FieldSpec;
 import com.squareup.javapoet.MethodSpec;
+import com.squareup.javapoet.ParameterSpec;
+import com.squareup.javapoet.ParameterizedTypeName;
 import com.squareup.javapoet.TypeName;
 import com.squareup.javapoet.TypeSpec;
 import com.squareup.javapoet.TypeVariableName;
 import dagger.internal.DelegateFactory;
+import dagger.internal.InstanceFactory;
 import dagger.internal.MapFactory;
 import dagger.internal.MapProviderFactory;
 import dagger.internal.Preconditions;
 import dagger.internal.SetFactory;
+import dagger.internal.TypedReleasableReferenceManagerDecorator;
+import dagger.internal.codegen.ComponentDescriptor.BuilderRequirementMethod;
 import dagger.internal.codegen.ComponentDescriptor.BuilderSpec;
 import dagger.internal.codegen.ComponentDescriptor.ComponentMethodDescriptor;
 import dagger.producers.Produced;
@@ -47,12 +110,22 @@ import dagger.producers.internal.MapOfProducerProducer;
 import dagger.producers.internal.MapProducer;
 import dagger.producers.internal.SetOfProducedProducer;
 import dagger.producers.internal.SetProducer;
+import dagger.releasablereferences.CanReleaseReferences;
+import dagger.releasablereferences.ForReleasableReferences;
+import dagger.releasablereferences.ReleasableReferenceManager;
+import dagger.releasablereferences.TypedReleasableReferenceManager;
+import java.util.Arrays;
+import java.util.EnumSet;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import javax.inject.Provider;
+import javax.lang.model.element.AnnotationMirror;
 import javax.lang.model.element.ExecutableElement;
+import javax.lang.model.element.Modifier;
 import javax.lang.model.element.Name;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.element.VariableElement;
@@ -64,67 +137,8 @@ import javax.lang.model.util.Elements;
 import javax.lang.model.util.Types;
 import javax.tools.Diagnostic;
 
-import static com.google.common.base.CaseFormat.LOWER_CAMEL;
-import static com.google.common.base.CaseFormat.UPPER_CAMEL;
-import static com.google.common.base.Preconditions.checkState;
-import static com.google.common.collect.Iterables.getOnlyElement;
-import static com.squareup.javapoet.MethodSpec.constructorBuilder;
-import static com.squareup.javapoet.MethodSpec.methodBuilder;
-import static dagger.internal.codegen.AbstractComponentWriter.InitializationState.DELEGATED;
-import static dagger.internal.codegen.AbstractComponentWriter.InitializationState.INITIALIZED;
-import static dagger.internal.codegen.AbstractComponentWriter.InitializationState.UNINITIALIZED;
-import static dagger.internal.codegen.AnnotationSpecs.SUPPRESS_WARNINGS_UNCHECKED;
-import static dagger.internal.codegen.CodeBlocks.makeParametersCodeBlock;
-import static dagger.internal.codegen.ContributionBinding.FactoryCreationStrategy.ENUM_INSTANCE;
-import static dagger.internal.codegen.ContributionBinding.Kind.PROVISION;
-import static dagger.internal.codegen.ErrorMessages.CANNOT_RETURN_NULL_FROM_NON_NULLABLE_COMPONENT_METHOD;
-import static dagger.internal.codegen.FrameworkDependency.frameworkDependenciesForBinding;
-import static dagger.internal.codegen.MapKeys.getMapKeyExpression;
-import static dagger.internal.codegen.MemberSelect.emptyFrameworkMapFactory;
-import static dagger.internal.codegen.MemberSelect.emptySetProvider;
-import static dagger.internal.codegen.MemberSelect.localField;
-import static dagger.internal.codegen.MemberSelect.noOpMembersInjector;
-import static dagger.internal.codegen.MemberSelect.staticMethod;
-import static dagger.internal.codegen.MembersInjectionBinding.Strategy.NO_OP;
-import static dagger.internal.codegen.Scope.reusableScope;
-import static dagger.internal.codegen.SourceFiles.frameworkTypeUsageStatement;
-import static dagger.internal.codegen.SourceFiles.generatedClassNameForBinding;
-import static dagger.internal.codegen.SourceFiles.membersInjectorNameForType;
-import static dagger.internal.codegen.TypeNames.DELEGATE_FACTORY;
-import static dagger.internal.codegen.TypeNames.DOUBLE_CHECK;
-import static dagger.internal.codegen.TypeNames.FACTORY;
-import static dagger.internal.codegen.TypeNames.ILLEGAL_STATE_EXCEPTION;
-import static dagger.internal.codegen.TypeNames.INSTANCE_FACTORY;
-import static dagger.internal.codegen.TypeNames.LISTENABLE_FUTURE;
-import static dagger.internal.codegen.TypeNames.MAP_FACTORY;
-import static dagger.internal.codegen.TypeNames.MAP_OF_PRODUCED_PRODUCER;
-import static dagger.internal.codegen.TypeNames.MAP_OF_PRODUCER_PRODUCER;
-import static dagger.internal.codegen.TypeNames.MAP_PRODUCER;
-import static dagger.internal.codegen.TypeNames.MAP_PROVIDER_FACTORY;
-import static dagger.internal.codegen.TypeNames.MEMBERS_INJECTORS;
-import static dagger.internal.codegen.TypeNames.PRODUCER;
-import static dagger.internal.codegen.TypeNames.PRODUCERS;
-import static dagger.internal.codegen.TypeNames.SET_FACTORY;
-import static dagger.internal.codegen.TypeNames.SET_OF_PRODUCED_PRODUCER;
-import static dagger.internal.codegen.TypeNames.SET_PRODUCER;
-import static dagger.internal.codegen.TypeNames.SINGLE_CHECK;
-import static dagger.internal.codegen.TypeNames.STRING;
-import static dagger.internal.codegen.TypeNames.UNSUPPORTED_OPERATION_EXCEPTION;
-import static dagger.internal.codegen.TypeSpecs.addSupertype;
-import static dagger.internal.codegen.Util.componentCanMakeNewInstances;
-import static dagger.internal.codegen.Util.requiresAPassedInstance;
-import static javax.lang.model.element.Modifier.ABSTRACT;
-import static javax.lang.model.element.Modifier.FINAL;
-import static javax.lang.model.element.Modifier.PRIVATE;
-import static javax.lang.model.element.Modifier.PUBLIC;
-import static javax.lang.model.element.Modifier.STATIC;
-import static javax.lang.model.type.TypeKind.DECLARED;
-import static javax.lang.model.type.TypeKind.VOID;
-
-/**
- * Creates the implementation class for a component or subcomponent.
- */
-abstract class AbstractComponentWriter {
+/** Creates the implementation class for a component or subcomponent. */
+abstract class AbstractComponentWriter implements HasBindingMembers {
   private static final String NOOP_BUILDER_METHOD_JAVADOC =
       "This module is declared, but an instance is not used in the component. This method is a "
           + "no-op. For more, see https://google.github.io/dagger/unused-modules.\n";
@@ -138,18 +152,21 @@ abstract class AbstractComponentWriter {
   protected final BindingGraph graph;
   protected final ImmutableMap<ComponentDescriptor, String> subcomponentNames;
   private final Map<BindingKey, InitializationState> initializationStates = new HashMap<>();
-  protected TypeSpec.Builder component;
+  protected final TypeSpec.Builder component;
   private final UniqueNameSet componentFieldNames = new UniqueNameSet();
   private final Map<BindingKey, MemberSelect> memberSelects = new HashMap<>();
   private final Map<BindingKey, MemberSelect> producerFromProviderMemberSelects = new HashMap<>();
+  private final RequestFulfillmentRegistry requestFulfillmentRegistry;
   protected final MethodSpec.Builder constructor = constructorBuilder().addModifiers(PRIVATE);
-  protected Optional<ClassName> builderName = Optional.absent();
+  protected Optional<ClassName> builderName = Optional.empty();
+  private final OptionalFactories optionalFactories;
+  private boolean done;
 
   /**
    * For each component requirement, the builder field. This map is empty for subcomponents that do
    * not use a builder.
    */
-  private ImmutableMap<TypeElement, FieldSpec> builderFields = ImmutableMap.of();
+  private ImmutableMap<ComponentRequirement, FieldSpec> builderFields = ImmutableMap.of();
 
   /**
    * For each component requirement, the member select for the component field that holds it.
@@ -157,7 +174,14 @@ abstract class AbstractComponentWriter {
    * <p>Fields are written for all requirements for subcomponents that do not use a builder, and for
    * any requirement that is reused from a subcomponent of this component.
    */
-  protected final Map<TypeElement, MemberSelect> componentContributionFields = Maps.newHashMap();
+  protected final Map<ComponentRequirement, MemberSelect> componentContributionFields =
+      Maps.newHashMap();
+
+  /**
+   * The member-selects for {@link dagger.internal.ReferenceReleasingProviderManager} fields,
+   * indexed by their {@link CanReleaseReferences @CanReleaseReferences} scope.
+   */
+  private ImmutableMap<Scope, MemberSelect> referenceReleasingProviderManagerFields;
 
   AbstractComponentWriter(
       Types types,
@@ -166,59 +190,76 @@ abstract class AbstractComponentWriter {
       CompilerOptions compilerOptions,
       ClassName name,
       BindingGraph graph,
-      ImmutableMap<ComponentDescriptor, String> subcomponentNames) {
+      ImmutableMap<ComponentDescriptor, String> subcomponentNames,
+      OptionalFactories optionalFactories) {
     this.types = types;
     this.elements = elements;
     this.keyFactory = keyFactory;
     this.compilerOptions = compilerOptions;
+    this.component = classBuilder(name);
     this.name = name;
     this.graph = graph;
     this.subcomponentNames = subcomponentNames;
+    this.optionalFactories = optionalFactories;
+    this.requestFulfillmentRegistry =
+        new RequestFulfillmentRegistry(graph.resolvedBindings(), this);
   }
 
-  protected final TypeElement componentDefinitionType() {
-    return graph.componentDescriptor().componentDefinitionType();
+  protected AbstractComponentWriter(
+      AbstractComponentWriter parent, ClassName name, BindingGraph graph) {
+    this(
+        parent.types,
+        parent.elements,
+        parent.keyFactory,
+        parent.compilerOptions,
+        name,
+        graph,
+        parent.subcomponentNames,
+        parent.optionalFactories);
   }
 
   protected final ClassName componentDefinitionTypeName() {
-    return ClassName.get(componentDefinitionType());
+    return ClassName.get(graph.componentType());
   }
 
   /**
-   * Returns an expression that evaluates to an instance of the contribution, looking for either a
+   * Returns an expression that evaluates to an instance of the requirement, looking for either a
    * builder field or a component field.
    */
-  private CodeBlock getComponentContributionExpression(TypeElement contributionType) {
-    if (builderFields.containsKey(contributionType)) {
-      return CodeBlock.of("builder.$N", builderFields.get(contributionType));
+  private CodeBlock getComponentContributionExpression(ComponentRequirement componentRequirement) {
+    if (builderFields.containsKey(componentRequirement)) {
+      return CodeBlock.of("builder.$N", builderFields.get(componentRequirement));
     } else {
       Optional<CodeBlock> codeBlock =
-          getOrCreateComponentContributionFieldExpression(contributionType);
-      checkState(codeBlock.isPresent(), "no builder or component field for %s", contributionType);
+          getOrCreateComponentRequirementFieldExpression(componentRequirement);
+      checkState(
+          codeBlock.isPresent(), "no builder or component field for %s", componentRequirement);
       return codeBlock.get();
     }
   }
 
   /**
-   * Returns an expression for a component contribution field. Adds a field the first time one is
-   * requested for a contribution type if this component's builder has a field for it.
+   * Returns an expression for a component requirement field. Adds a field the first time one is
+   * requested for a requirement if this component's builder has a field for it.
    */
-  protected Optional<CodeBlock> getOrCreateComponentContributionFieldExpression(
-      TypeElement contributionType) {
-    MemberSelect fieldSelect = componentContributionFields.get(contributionType);
+  protected Optional<CodeBlock> getOrCreateComponentRequirementFieldExpression(
+      ComponentRequirement componentRequirement) {
+    MemberSelect fieldSelect = componentContributionFields.get(componentRequirement);
     if (fieldSelect == null) {
-      if (!builderFields.containsKey(contributionType)) {
-        return Optional.absent();
+      if (!builderFields.containsKey(componentRequirement)) {
+        return Optional.empty();
       }
       FieldSpec componentField =
-          componentField(ClassName.get(contributionType), simpleVariableName(contributionType))
+          componentField(
+                  TypeName.get(componentRequirement.type()),
+                  simpleVariableName(componentRequirement.typeElement()))
               .addModifiers(PRIVATE, FINAL)
               .build();
       component.addField(componentField);
       constructor.addCode(
-          "this.$N = builder.$N;", componentField, builderFields.get(contributionType));
+          "this.$N = builder.$N;", componentField, builderFields.get(componentRequirement));
       fieldSelect = localField(name, componentField.name);
-      componentContributionFields.put(contributionType, fieldSelect);
+      componentContributionFields.put(componentRequirement, fieldSelect);
     }
     return Optional.of(fieldSelect.getExpressionFor(name));
   }
@@ -234,7 +275,8 @@ abstract class AbstractComponentWriter {
     return getMemberSelect(key).getExpressionFor(name);
   }
 
-  protected MemberSelect getMemberSelect(BindingKey key) {
+  @Override
+  public MemberSelect getMemberSelect(BindingKey key) {
     return memberSelects.get(key);
   }
 
@@ -252,27 +294,41 @@ abstract class AbstractComponentWriter {
   }
 
   /**
+   * The member-select expression for the {@link dagger.internal.ReferenceReleasingProviderManager}
+   * object for a scope.
+   */
+  protected CodeBlock getReferenceReleasingProviderManagerExpression(Scope scope) {
+    return referenceReleasingProviderManagerFields.get(scope).getExpressionFor(name);
+  }
+
+  /**
    * Constructs a {@link TypeSpec.Builder} that models the {@link BindingGraph} for this component.
    * This is only intended to be called once (and will throw on successive invocations). If the
    * component must be regenerated, use a new instance.
    */
   final TypeSpec.Builder write() {
-    checkState(component == null, "ComponentWriter has already been generated.");
-    component = createComponentClass();
+    checkState(!done, "ComponentWriter has already been generated.");
+    decorateComponent();
     addBuilder();
     addFactoryMethods();
-    addFields();
+    addReferenceReleasingProviderManagerFields();
+    addFrameworkFields();
     initializeFrameworkTypes();
     implementInterfaceMethods();
     addSubcomponents();
     component.addMethod(constructor.build());
+    if (graph.componentDescriptor().kind().isTopLevel()) {
+      optionalFactories.addMembers(component);
+    }
+    done = true;
     return component;
   }
 
   /**
-   * Creates the component implementation class.
+   * Adds Javadoc, modifiers, supertypes, and annotations to the component implementation class
+   * declaration.
    */
-  protected abstract TypeSpec.Builder createComponentClass();
+  protected abstract void decorateComponent();
 
   /**
    * Adds a builder type.
@@ -311,16 +367,18 @@ abstract class AbstractComponentWriter {
    * Adds fields for each of the {@linkplain BindingGraph#componentRequirements component
    * requirements}. Regardless of builder spec, there is always one field per requirement.
    */
-  private ImmutableMap<TypeElement, FieldSpec> addBuilderFields(TypeSpec.Builder componentBuilder) {
+  private ImmutableMap<ComponentRequirement, FieldSpec> addBuilderFields(
+      TypeSpec.Builder componentBuilder) {
     UniqueNameSet builderFieldNames = new UniqueNameSet();
-    ImmutableMap.Builder<TypeElement, FieldSpec> builderFields = ImmutableMap.builder();
-    for (TypeElement contributionElement : graph.componentRequirements()) {
+    ImmutableMap.Builder<ComponentRequirement, FieldSpec> builderFields = ImmutableMap.builder();
+    for (ComponentRequirement componentRequirement : graph.componentRequirements()) {
       String contributionName =
-          builderFieldNames.getUniqueName(simpleVariableName(contributionElement));
+          builderFieldNames.getUniqueName(componentRequirement.variableName());
       FieldSpec builderField =
-          FieldSpec.builder(ClassName.get(contributionElement), contributionName, PRIVATE).build();
+          FieldSpec.builder(TypeName.get(componentRequirement.type()), contributionName, PRIVATE)
+              .build();
       componentBuilder.addField(builderField);
-      builderFields.put(contributionElement, builderField);
+      builderFields.put(componentRequirement, builderField);
     }
     return builderFields.build();
   }
@@ -341,18 +399,25 @@ abstract class AbstractComponentWriter {
     }
     buildMethod.returns(componentDefinitionTypeName()).addModifiers(PUBLIC);
 
-    for (Map.Entry<TypeElement, FieldSpec> builderFieldEntry : builderFields.entrySet()) {
+    for (Map.Entry<ComponentRequirement, FieldSpec> builderFieldEntry : builderFields.entrySet()) {
       FieldSpec builderField = builderFieldEntry.getValue();
-      if (componentCanMakeNewInstances(builderFieldEntry.getKey())) {
-        buildMethod.addCode(
-            "if ($1N == null) { this.$1N = new $2T(); }", builderField, builderField.type);
-      } else if (requiresAPassedInstance(elements, builderFieldEntry.getKey())) {
-        buildMethod.addCode(
-            "if ($N == null) { throw new $T($T.class.getCanonicalName() + $S); }",
-            builderField,
-            ILLEGAL_STATE_EXCEPTION,
-            builderField.type,
-            " must be set");
+      switch (builderFieldEntry.getKey().nullPolicy(elements, types)) {
+        case NEW:
+          buildMethod.addCode(
+              "if ($1N == null) { this.$1N = new $2T(); }", builderField, builderField.type);
+          break;
+        case THROW:
+          buildMethod.addCode(
+              "if ($N == null) { throw new $T($T.class.getCanonicalName() + $S); }",
+              builderField,
+              IllegalStateException.class,
+              TypeNames.rawTypeName(builderField.type),
+              " must be set");
+          break;
+        case ALLOW:
+          break;
+        default:
+          throw new AssertionError(builderFieldEntry.getKey());
       }
     }
     buildMethod.addStatement("return new $T(this)", name);
@@ -365,27 +430,36 @@ abstract class AbstractComponentWriter {
    */
   private void addBuilderMethods(
       TypeSpec.Builder componentBuilder, Optional<BuilderSpec> builderSpec) {
-    ImmutableSet<TypeElement> componentRequirements = graph.componentRequirements();
+    ImmutableSet<ComponentRequirement> componentRequirements = graph.componentRequirements();
     if (builderSpec.isPresent()) {
       UniqueNameSet parameterNames = new UniqueNameSet();
-      for (Map.Entry<TypeElement, ExecutableElement> builderMethodEntry :
-          builderSpec.get().methodMap().entrySet()) {
-        TypeElement builderMethodType = builderMethodEntry.getKey();
-        ExecutableElement specMethod = builderMethodEntry.getValue();
+      for (BuilderRequirementMethod requirementMethod : builderSpec.get().requirementMethods()) {
+        ComponentRequirement builderRequirement = requirementMethod.requirement();
+        ExecutableElement specMethod = requirementMethod.method();
         MethodSpec.Builder builderMethod = addBuilderMethodFromSpec(specMethod);
-        String parameterName =
-            parameterNames.getUniqueName(
-                Iterables.getOnlyElement(specMethod.getParameters()).getSimpleName());
-        builderMethod.addParameter(ClassName.get(builderMethodType), parameterName);
-        if (componentRequirements.contains(builderMethodType)) {
+        VariableElement parameterElement = Iterables.getOnlyElement(specMethod.getParameters());
+        String parameterName = parameterNames.getUniqueName(parameterElement.getSimpleName());
+
+        TypeName argType =
+            parameterElement.asType().getKind().isPrimitive()
+                // Primitives need to use the original (unresolved) type to avoid boxing.
+                ? TypeName.get(parameterElement.asType())
+                // Otherwise we use the full resolved type.
+                : TypeName.get(builderRequirement.type());
+
+        builderMethod.addParameter(argType, parameterName);
+        if (componentRequirements.contains(builderRequirement)) {
           // required type
           builderMethod.addStatement(
-              "this.$N = $T.checkNotNull($L)",
-              builderFields.get(builderMethodType),
-              Preconditions.class,
-              parameterName);
+              "this.$N = $L",
+              builderFields.get(builderRequirement),
+              builderRequirement
+                      .nullPolicy(elements, types)
+                      .equals(ComponentRequirement.NullPolicy.ALLOW)
+                  ? parameterName
+                  : CodeBlock.of("$T.checkNotNull($L)", Preconditions.class, parameterName));
           addBuilderMethodReturnStatementForSpec(specMethod, builderMethod);
-        } else if (graph.ownedModuleTypes().contains(builderMethodType)) {
+        } else if (graph.ownedModuleTypes().contains(builderRequirement.typeElement())) {
           // owned, but not required
           builderMethod.addJavadoc(NOOP_BUILDER_METHOD_JAVADOC);
           addBuilderMethodReturnStatementForSpec(specMethod, builderMethod);
@@ -393,21 +467,21 @@ abstract class AbstractComponentWriter {
           // neither owned nor required, so it must be an inherited module
           builderMethod.addStatement(
               "throw new $T($T.format($S, $T.class.getCanonicalName()))",
-              UNSUPPORTED_OPERATION_EXCEPTION,
-              STRING,
+              UnsupportedOperationException.class,
+              String.class,
               "%s cannot be set because it is inherited from the enclosing component",
-              ClassName.get(builderMethodType));
+              TypeNames.rawTypeName(TypeName.get(builderRequirement.type())));
         }
         componentBuilder.addMethod(builderMethod.build());
       }
     } else {
-      for (TypeElement componentRequirement : graph.availableDependencies()) {
-        String componentRequirementName = simpleVariableName(componentRequirement);
+      for (ComponentRequirement componentRequirement : graph.availableDependencies()) {
+        String componentRequirementName = simpleVariableName(componentRequirement.typeElement());
         MethodSpec.Builder builderMethod =
             methodBuilder(componentRequirementName)
                 .returns(builderName.get())
                 .addModifiers(PUBLIC)
-                .addParameter(ClassName.get(componentRequirement), componentRequirementName);
+                .addParameter(ClassName.get(componentRequirement.type()), componentRequirementName);
         if (componentRequirements.contains(componentRequirement)) {
           builderMethod.addStatement(
               "this.$N = $T.checkNotNull($L)",
@@ -461,10 +535,80 @@ abstract class AbstractComponentWriter {
    */
   protected abstract void addFactoryMethods();
 
-  private void addFields() {
-    for (ResolvedBindings resolvedBindings : graph.resolvedBindings().values()) {
-      addField(resolvedBindings);
+  /**
+   * Adds a {@link dagger.internal.ReferenceReleasingProviderManager} field for every {@link
+   * CanReleaseReferences @ReleasableReferences} scope for which {@linkplain
+   * #requiresReleasableReferences(Scope) one is required}.
+   */
+  private void addReferenceReleasingProviderManagerFields() {
+    ImmutableMap.Builder<Scope, MemberSelect> fields = ImmutableMap.builder();
+    for (Scope scope : graph.componentDescriptor().releasableReferencesScopes()) {
+      if (requiresReleasableReferences(scope)) {
+        FieldSpec field = referenceReleasingProxyManagerField(scope);
+        component.addField(field);
+        fields.put(scope, localField(name, field.name));
+      }
     }
+    referenceReleasingProviderManagerFields = fields.build();
+  }
+
+  /**
+   * Returns {@code true} if {@code scope} {@linkplain CanReleaseReferences can release its
+   * references} and there is a dependency request in the component for any of
+   *
+   * <ul>
+   * <li>{@code @ForReleasableReferences(scope)} {@link ReleasableReferenceManager}
+   * <li>{@code @ForReleasableReferences(scope)} {@code TypedReleasableReferenceManager<M>}, where
+   *     {@code M} is the releasable-references metatadata type for {@code scope}
+   * <li>{@code Set<ReleasableReferenceManager>}
+   * <li>{@code Set<TypedReleasableReferenceManager<M>>}, where {@code M} is the metadata type for
+   *     the scope
+   * </ul>
+   */
+  private boolean requiresReleasableReferences(Scope scope) {
+    if (!scope.canReleaseReferences()) {
+      return false;
+    }
+
+    if (graphHasContributionBinding(keyFactory.forReleasableReferenceManager(scope))
+        || graphHasContributionBinding(keyFactory.forSetOfReleasableReferenceManagers())) {
+      return true;
+    }
+
+    for (AnnotationMirror metadata : scope.releasableReferencesMetadata()) {
+      if (graphHasContributionBinding(
+              keyFactory.forTypedReleasableReferenceManager(scope, metadata.getAnnotationType()))
+          || graphHasContributionBinding(
+              keyFactory.forSetOfTypedReleasableReferenceManagers(metadata.getAnnotationType()))) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  private boolean graphHasContributionBinding(Key key) {
+    return graph.resolvedBindings().containsKey(contribution(key));
+  }
+
+  private FieldSpec referenceReleasingProxyManagerField(Scope scope) {
+    return componentField(
+            REFERENCE_RELEASING_PROVIDER_MANAGER,
+            UPPER_CAMEL.to(
+                LOWER_CAMEL, scope.scopeAnnotationElement().getSimpleName() + "References"))
+        .addModifiers(PRIVATE, FINAL)
+        .initializer(
+            "new $T($T.class)",
+            REFERENCE_RELEASING_PROVIDER_MANAGER,
+            scope.scopeAnnotationElement())
+        .addJavadoc(
+            "The manager that releases references for the {@link $T} scope.\n",
+            scope.scopeAnnotationElement())
+        .build();
+  }
+
+  private void addFrameworkFields() {
+    graph.resolvedBindings().values().forEach(this::addField);
   }
 
   private void addField(ResolvedBindings resolvedBindings) {
@@ -485,7 +629,7 @@ abstract class AbstractComponentWriter {
 
     // TODO(gak): get rid of the field for unscoped delegated bindings
 
-    FieldSpec frameworkField = addFrameworkField(resolvedBindings, Optional.<ClassName>absent());
+    FieldSpec frameworkField = addFrameworkField(resolvedBindings, Optional.empty());
     memberSelects.put(bindingKey, localField(name, frameworkField.name));
   }
 
@@ -507,7 +651,7 @@ abstract class AbstractComponentWriter {
             contributionBindingField.name());
     contributionField.addModifiers(PRIVATE);
     if (useRawType) {
-      contributionField.addAnnotation(AnnotationSpecs.SUPPRESS_WARNINGS_RAWTYPES);
+      contributionField.addAnnotation(AnnotationSpecs.suppressWarnings(RAWTYPES));
     }
 
     FieldSpec field = contributionField.build();
@@ -533,12 +677,12 @@ abstract class AbstractComponentWriter {
    * this method returns the static member select that returns the factory or no-op members
    * injector.
    */
-  private Optional<MemberSelect> staticMemberSelect(ResolvedBindings resolvedBindings) {
+  private static Optional<MemberSelect> staticMemberSelect(ResolvedBindings resolvedBindings) {
     BindingKey bindingKey = resolvedBindings.bindingKey();
     switch (bindingKey.kind()) {
       case CONTRIBUTION:
         ContributionBinding contributionBinding = resolvedBindings.contributionBinding();
-        if (contributionBinding.factoryCreationStrategy().equals(ENUM_INSTANCE)
+        if (contributionBinding.factoryCreationStrategy().equals(SINGLETON_INSTANCE)
             && !contributionBinding.scope().isPresent()) {
           switch (contributionBinding.bindingKind()) {
             case SYNTHETIC_MULTIBOUND_MAP:
@@ -546,7 +690,7 @@ abstract class AbstractComponentWriter {
               MapType mapType = MapType.from(contributionBinding.key());
               return Optional.of(
                   emptyFrameworkMapFactory(
-                      frameworkMapFactoryClassName(bindingType),
+                      bindingType,
                       mapType.keyType(),
                       mapType.unwrappedValueType(bindingType.frameworkClass())));
 
@@ -559,7 +703,7 @@ abstract class AbstractComponentWriter {
             case PROVISION:
               if (bindingKey.key().type().getKind().equals(DECLARED)) {
                 ImmutableList<TypeVariableName> typeVariables =
-                    SourceFiles.bindingTypeElementTypeVariableNames(contributionBinding);
+                    bindingTypeElementTypeVariableNames(contributionBinding);
                 if (!typeVariables.isEmpty()) {
                   List<? extends TypeMirror> typeArguments =
                       ((DeclaredType) bindingKey.key().type()).getTypeArguments();
@@ -567,12 +711,12 @@ abstract class AbstractComponentWriter {
                       generatedClassNameForBinding(contributionBinding), typeArguments));
                 }
               }
+              // fall through
 
             default:
               return Optional.of(
                   staticMethod(
-                      generatedClassNameForBinding(contributionBinding),
-                      CodeBlock.of("create()")));
+                      generatedClassNameForBinding(contributionBinding), CodeBlock.of("create()")));
           }
         }
         break;
@@ -581,7 +725,7 @@ abstract class AbstractComponentWriter {
         Optional<MembersInjectionBinding> membersInjectionBinding =
             resolvedBindings.membersInjectionBinding();
         if (membersInjectionBinding.isPresent()
-            && membersInjectionBinding.get().injectionStrategy().equals(NO_OP)) {
+            && membersInjectionBinding.get().injectionSites().isEmpty()) {
           return Optional.of(noOpMembersInjector(membersInjectionBinding.get().key().type()));
         }
         break;
@@ -589,7 +733,7 @@ abstract class AbstractComponentWriter {
       default:
         throw new AssertionError();
     }
-    return Optional.absent();
+    return Optional.empty();
   }
 
   /**
@@ -661,53 +805,38 @@ abstract class AbstractComponentWriter {
         graph.componentDescriptor().componentMethods()) {
       if (componentMethod.dependencyRequest().isPresent()) {
         DependencyRequest interfaceRequest = componentMethod.dependencyRequest().get();
-        ExecutableElement requestElement =
-            MoreElements.asExecutable(interfaceRequest.requestElement());
-        ExecutableType requestType = MoreTypes.asExecutable(types.asMemberOf(
-            MoreTypes.asDeclared(componentDefinitionType().asType()), requestElement));
-        MethodSignature signature = MethodSignature.fromExecutableType(
-            requestElement.getSimpleName().toString(), requestType);
+        ExecutableElement methodElement =
+            MoreElements.asExecutable(componentMethod.methodElement());
+        ExecutableType requestType =
+            MoreTypes.asExecutable(
+                types.asMemberOf(
+                    MoreTypes.asDeclared(graph.componentType().asType()), methodElement));
+        MethodSignature signature =
+            MethodSignature.fromExecutableType(
+                methodElement.getSimpleName().toString(), requestType);
         if (!interfaceMethods.contains(signature)) {
           interfaceMethods.add(signature);
           MethodSpec.Builder interfaceMethod =
-              methodBuilder(requestElement.getSimpleName().toString())
-                  .addAnnotation(Override.class)
-                  .addModifiers(PUBLIC)
-                  .returns(TypeName.get(requestType.getReturnType()));
-          BindingKey bindingKey = interfaceRequest.bindingKey();
-          MemberSelect memberSelect = getMemberSelect(bindingKey);
-          CodeBlock memberSelectCodeBlock = memberSelect.getExpressionFor(name);
+              methodSpecForComponentMethod(methodElement, requestType);
+          RequestFulfillment fulfillment =
+              requestFulfillmentRegistry.getRequestFulfillment(interfaceRequest.bindingKey());
+          CodeBlock codeBlock = fulfillment.getSnippetForDependencyRequest(interfaceRequest, name);
           switch (interfaceRequest.kind()) {
             case MEMBERS_INJECTOR:
-              List<? extends VariableElement> parameters = requestElement.getParameters();
-              if (parameters.isEmpty()) {
-                // we're returning the framework type
-                interfaceMethod.addStatement("return $L", memberSelectCodeBlock);
-              } else {
-                Name parameterName = Iterables.getOnlyElement(parameters).getSimpleName();
-                interfaceMethod.addParameter(
-                    TypeName.get(Iterables.getOnlyElement(requestType.getParameterTypes())),
-                    parameterName.toString());
-                interfaceMethod.addStatement(
-                    "$L.injectMembers($L)", memberSelectCodeBlock, parameterName);
+              List<? extends VariableElement> parameters = methodElement.getParameters();
+              if (!parameters.isEmpty()) {
+                Name parameterName =
+                    Iterables.getOnlyElement(methodElement.getParameters()).getSimpleName();
+                interfaceMethod.addStatement("$L.injectMembers($L)", codeBlock, parameterName);
                 if (!requestType.getReturnType().getKind().equals(VOID)) {
                   interfaceMethod.addStatement("return $L", parameterName);
                 }
+                break;
               }
-              break;
-            case INSTANCE:
-            case LAZY:
-            case PRODUCED:
-            case PRODUCER:
-            case PROVIDER:
-            case PROVIDER_OF_LAZY:
-            case FUTURE:
-              interfaceMethod.addStatement(
-                  "return $L",
-                  frameworkTypeUsageStatement(memberSelectCodeBlock, interfaceRequest.kind()));
-              break;
+              // fall through
             default:
-              throw new AssertionError();
+              interfaceMethod.addStatement("return $L", codeBlock);
+              break;
           }
           component.addMethod(interfaceMethod.build());
         }
@@ -715,10 +844,47 @@ abstract class AbstractComponentWriter {
     }
   }
 
+  private MethodSpec.Builder methodSpecForComponentMethod(
+      ExecutableElement method, ExecutableType methodType) {
+    String methodName = method.getSimpleName().toString();
+    MethodSpec.Builder methodBuilder = MethodSpec.methodBuilder(methodName);
+
+    methodBuilder.addAnnotation(Override.class);
+
+    Set<Modifier> modifiers = EnumSet.copyOf(method.getModifiers());
+    modifiers.remove(Modifier.ABSTRACT);
+    methodBuilder.addModifiers(modifiers);
+
+    methodBuilder.returns(TypeName.get(methodType.getReturnType()));
+
+    List<? extends VariableElement> parameters = method.getParameters();
+    List<? extends TypeMirror> resolvedParameterTypes = methodType.getParameterTypes();
+    verify(parameters.size() == resolvedParameterTypes.size());
+    for (int i = 0; i < parameters.size(); i++) {
+      VariableElement parameter = parameters.get(i);
+      TypeName type = TypeName.get(resolvedParameterTypes.get(i));
+      String name = parameter.getSimpleName().toString();
+      Set<Modifier> parameterModifiers = parameter.getModifiers();
+      ParameterSpec.Builder parameterBuilder =
+          ParameterSpec.builder(type, name)
+              .addModifiers(parameterModifiers.toArray(new Modifier[0]));
+      methodBuilder.addParameter(parameterBuilder.build());
+    }
+    for (TypeMirror thrownType : method.getThrownTypes()) {
+      methodBuilder.addException(TypeName.get(thrownType));
+    }
+    return methodBuilder;
+  }
+
   private void addSubcomponents() {
-    for (Map.Entry<ExecutableElement, BindingGraph> subgraphEntry : graph.subgraphs().entrySet()) {
+    for (BindingGraph subgraph : graph.subgraphs()) {
+      ComponentMethodDescriptor componentMethodDescriptor =
+          graph.componentDescriptor()
+              .subcomponentsByFactoryMethod()
+              .inverse()
+              .get(subgraph.componentDescriptor());
       SubcomponentWriter subcomponent =
-          new SubcomponentWriter(this, subgraphEntry.getKey(), subgraphEntry.getValue());
+          new SubcomponentWriter(this, Optional.ofNullable(componentMethodDescriptor), subgraph);
       component.addType(subcomponent.write().build());
     }
   }
@@ -728,7 +894,7 @@ abstract class AbstractComponentWriter {
   private void initializeFrameworkTypes() {
     ImmutableList.Builder<CodeBlock> codeBlocks = ImmutableList.builder();
     for (BindingKey bindingKey : graph.resolvedBindings().keySet()) {
-      codeBlocks.addAll(initializeFrameworkType(bindingKey).asSet());
+      initializeFrameworkType(bindingKey).ifPresent(codeBlocks::add);
     }
     List<List<CodeBlock>> partitions =
         Lists.partition(codeBlocks.build(), INITIALIZATIONS_PER_INITIALIZE_METHOD);
@@ -743,7 +909,7 @@ abstract class AbstractComponentWriter {
                * initializing a raw field in this method, but the structure of this code makes it
                * awkward to pass that bit through.  This will be cleaned up when we no longer
                * separate fields and initilization as we do now. */
-              .addAnnotation(SUPPRESS_WARNINGS_UNCHECKED)
+              .addAnnotation(AnnotationSpecs.suppressWarnings(UNCHECKED))
               .addCode(CodeBlocks.concat(partition));
       if (builderName.isPresent()) {
         initializeMethod.addParameter(builderName.get(), "builder", FINAL);
@@ -767,7 +933,7 @@ abstract class AbstractComponentWriter {
     // If the field is inherited or the member select is static, don't initialize.
     MemberSelect memberSelect = getMemberSelect(bindingKey);
     if (memberSelect.staticMember() || !memberSelect.owningClass().equals(name)) {
-      return Optional.absent();
+      return Optional.empty();
     }
 
     switch (bindingKey.kind()) {
@@ -788,11 +954,12 @@ abstract class AbstractComponentWriter {
      * called before we get the code block that initializes the member. */
     switch (binding.factoryCreationStrategy()) {
       case DELEGATE:
-        CodeBlock delegatingCodeBlock = CodeBlock.of(
-            "($T) $L",
-            binding.frameworkClass(),
-            getMemberSelect(
-                Iterables.getOnlyElement(binding.dependencies()).bindingKey())
+        CodeBlock delegatingCodeBlock =
+            CodeBlock.of(
+                "($T) $L",
+                binding.bindingType().frameworkClass(),
+                getMemberSelect(
+                        Iterables.getOnlyElement(binding.explicitDependencies()).bindingKey())
                     .getExpressionFor(name));
         return Optional.of(
             CodeBlocks.concat(
@@ -803,9 +970,9 @@ abstract class AbstractComponentWriter {
                         binding.scope().isPresent()
                             ? decorateForScope(delegatingCodeBlock, binding.scope().get())
                             : delegatingCodeBlock))));
-      case ENUM_INSTANCE:
+      case SINGLETON_INSTANCE:
         if (!binding.scope().isPresent()) {
-          return Optional.absent();
+          return Optional.empty();
         }
         // fall through
       case CLASS_CONSTRUCTOR:
@@ -824,8 +991,8 @@ abstract class AbstractComponentWriter {
     MembersInjectionBinding binding =
         graph.resolvedBindings().get(bindingKey).membersInjectionBinding().get();
 
-    if (binding.injectionStrategy().equals(MembersInjectionBinding.Strategy.NO_OP)) {
-      return Optional.absent();
+    if (binding.injectionSites().isEmpty()) {
+      return Optional.empty();
     }
 
     return Optional.of(
@@ -854,8 +1021,8 @@ abstract class AbstractComponentWriter {
     ImmutableList.Builder<CodeBlock> initializations = ImmutableList.builder();
 
     for (BindingKey dependencyKey :
-        FluentIterable.from(binding.implicitDependencies())
-            .transform(DependencyRequest.BINDING_KEY_FUNCTION)
+        FluentIterable.from(binding.dependencies())
+            .transform(DependencyRequest::bindingKey)
             .toSet()) {
       if (!getMemberSelect(dependencyKey).staticMember()
           && getInitializationState(dependencyKey).equals(UNINITIALIZED)) {
@@ -871,7 +1038,7 @@ abstract class AbstractComponentWriter {
 
   private CodeBlock initializeProducersFromProviderDependencies(Binding binding) {
     ImmutableList.Builder<CodeBlock> initializations = ImmutableList.builder();
-    for (FrameworkDependency frameworkDependency : frameworkDependenciesForBinding(binding)) {
+    for (FrameworkDependency frameworkDependency : binding.frameworkDependencies()) {
       ResolvedBindings resolvedBindings =
           graph.resolvedBindings().get(frameworkDependency.bindingKey());
       if (resolvedBindings.frameworkClass().equals(Provider.class)
@@ -887,10 +1054,11 @@ abstract class AbstractComponentWriter {
         producerFromProviderMemberSelects.put(frameworkDependency.bindingKey(), memberSelect);
         initializations.add(
             CodeBlock.of(
-                "this.$L = $T.producerFromProvider($L);",
+                "this.$L = $L;",
                 memberSelect.getExpressionFor(name),
-                PRODUCERS,
-                getMemberSelectExpression(frameworkDependency.bindingKey())));
+                requestFulfillmentRegistry
+                    .getRequestFulfillment(frameworkDependency.bindingKey())
+                    .getSnippetForFrameworkDependency(frameworkDependency, name)));
       }
     }
     return CodeBlocks.concat(initializations.build());
@@ -932,18 +1100,15 @@ abstract class AbstractComponentWriter {
             bindingKeyTypeName.equals(componentDefinitionTypeName())
                 ? "this"
                 : getComponentContributionExpression(
-                    MoreTypes.asTypeElement(binding.key().type())));
+                    ComponentRequirement.forDependency(binding.key().type())));
 
       case COMPONENT_PROVISION:
         {
-          TypeElement bindingTypeElement =
-              graph.componentDescriptor().dependencyMethodIndex().get(binding.bindingElement());
-          String localFactoryVariable = simpleVariableName(bindingTypeElement);
+          TypeElement dependencyType = dependencyTypeForBinding(binding);
+          String dependencyVariable = simpleVariableName(dependencyType);
           CodeBlock callFactoryMethod =
               CodeBlock.of(
-                  "$L.$L()",
-                  localFactoryVariable,
-                  binding.bindingElement().getSimpleName().toString());
+                  "$L.$L()", dependencyVariable, binding.bindingElement().get().getSimpleName());
           // TODO(sameb): This throws a very vague NPE right now.  The stack trace doesn't
           // help to figure out what the method or return type is.  If we include a string
           // of the return type or method name in the error message, that can defeat obfuscation.
@@ -954,49 +1119,69 @@ abstract class AbstractComponentWriter {
               binding.nullableType().isPresent()
                       || compilerOptions.nullableValidationKind().equals(Diagnostic.Kind.WARNING)
                   ? CodeBlock.of("return $L;", callFactoryMethod)
-                  : CodeBlock.of("return $T.checkNotNull($L, $S);",
+                  : CodeBlock.of(
+                      "return $T.checkNotNull($L, $S);",
                       Preconditions.class,
                       callFactoryMethod,
                       CANNOT_RETURN_NULL_FROM_NON_NULLABLE_COMPONENT_METHOD);
           return CodeBlock.of(
               Joiner.on('\n')
                   .join(
-                      "new $1T<$2T>() {",
+                      "new $1L<$2T>() {",
                       "  private final $5T $6L = $3L;",
                       "  $4L@Override public $2T get() {",
                       "    $7L",
                       "  }",
                       "}"),
-              /* 1 */ FACTORY,
+              // TODO(ronshapiro): Until we remove Factory, fully qualify the import so it doesn't
+              // conflict with anyone that has Factory as an inner type of a component (like
+              // AndroidInjector.Factory
+              /* 1 */ "dagger.internal.Factory",
               /* 2 */ bindingKeyTypeName,
-              /* 3 */ getComponentContributionExpression(bindingTypeElement),
+              /* 3 */ getComponentContributionExpression(
+                  ComponentRequirement.forDependency(dependencyType.asType())),
               /* 4 */ nullableAnnotation(binding.nullableType()),
-              /* 5 */ TypeName.get(bindingTypeElement.asType()),
-              /* 6 */ localFactoryVariable,
+              /* 5 */ TypeName.get(dependencyType.asType()),
+              /* 6 */ dependencyVariable,
               /* 7 */ getMethodBody);
         }
 
       case SUBCOMPONENT_BUILDER:
+        String subcomponentName =
+            subcomponentNames.get(
+                graph.componentDescriptor()
+                    .subcomponentsByBuilderType()
+                    .get(MoreTypes.asTypeElement(binding.key().type())));
         return CodeBlock.of(
             Joiner.on('\n')
                 .join(
-                    "new $1T<$2T>() {",
+                    "new $1L<$2T>() {",
                     "  @Override public $2T get() {",
-                    "    return $3L();",
+                    "    return new $3LBuilder();",
                     "  }",
                     "}"),
-            /* 1 */ FACTORY,
+            // TODO(ronshapiro): Until we remove Factory, fully qualify the import so it doesn't
+            // conflict with dagger.android.ActivityInjector.Factory
+            /* 1 */ "dagger.internal.Factory",
             /* 2 */ bindingKeyTypeName,
-            /* 3 */ binding.bindingElement().getSimpleName().toString());
+            /* 3 */ subcomponentName);
+
+      case BUILDER_BINDING:
+        return CodeBlock.of(
+            "$T.$L($L)",
+            InstanceFactory.class,
+            binding.nullableType().isPresent() ? "createNullable" : "create",
+            getComponentContributionExpression(ComponentRequirement.forBinding(binding)));
 
       case INJECTION:
       case PROVISION:
         {
           List<CodeBlock> arguments =
-              Lists.newArrayListWithCapacity(binding.dependencies().size() + 1);
-          if (binding.bindingKind().equals(PROVISION)
-              && !binding.bindingElement().getModifiers().contains(STATIC)) {
-            arguments.add(getComponentContributionExpression(binding.contributingModule().get()));
+              Lists.newArrayListWithCapacity(binding.explicitDependencies().size() + 1);
+          if (binding.requiresModuleInstance()) {
+            arguments.add(
+                getComponentContributionExpression(
+                    ComponentRequirement.forModule(binding.contributingModule().get().asType())));
           }
           arguments.addAll(getDependencyArguments(binding));
 
@@ -1012,8 +1197,7 @@ abstract class AbstractComponentWriter {
 
       case COMPONENT_PRODUCTION:
         {
-          TypeElement bindingTypeElement =
-              graph.componentDescriptor().dependencyMethodIndex().get(binding.bindingElement());
+          TypeElement dependencyType = dependencyTypeForBinding(binding);
           return CodeBlock.of(
               Joiner.on('\n')
                   .join(
@@ -1026,19 +1210,21 @@ abstract class AbstractComponentWriter {
               /* 1 */ PRODUCER,
               /* 2 */ TypeName.get(binding.key().type()),
               /* 3 */ LISTENABLE_FUTURE,
-              /* 4 */ getComponentContributionExpression(bindingTypeElement),
-              /* 5 */ binding.bindingElement().getSimpleName().toString(),
-              /* 6 */ TypeName.get(bindingTypeElement.asType()),
-              /* 7 */ simpleVariableName(bindingTypeElement));
+              /* 4 */ getComponentContributionExpression(
+                  ComponentRequirement.forDependency(dependencyType.asType())),
+              /* 5 */ binding.bindingElement().get().getSimpleName(),
+              /* 6 */ TypeName.get(dependencyType.asType()),
+              /* 7 */ simpleVariableName(dependencyType));
         }
 
-      case IMMEDIATE:
-      case FUTURE_PRODUCTION:
+      case PRODUCTION:
         {
           List<CodeBlock> arguments =
-              Lists.newArrayListWithCapacity(binding.implicitDependencies().size() + 2);
-          if (!binding.bindingElement().getModifiers().contains(STATIC)) {
-            arguments.add(getComponentContributionExpression(binding.bindingTypeElement()));
+              Lists.newArrayListWithCapacity(binding.dependencies().size() + 2);
+          if (binding.requiresModuleInstance()) {
+            arguments.add(
+                getComponentContributionExpression(
+                    ComponentRequirement.forModule(binding.contributingModule().get().asType())));
           }
           arguments.addAll(getDependencyArguments(binding));
 
@@ -1049,10 +1235,13 @@ abstract class AbstractComponentWriter {
         }
 
       case SYNTHETIC_MAP:
+        FrameworkDependency frameworkDependency = getOnlyElement(binding.frameworkDependencies());
         return CodeBlock.of(
             "$T.create($L)",
             mapFactoryClassName(binding),
-            getMemberSelectExpression(getOnlyElement(binding.dependencies()).bindingKey()));
+            requestFulfillmentRegistry
+                .getRequestFulfillment(frameworkDependency.bindingKey())
+                .getSnippetForFrameworkDependency(frameworkDependency, name));
 
       case SYNTHETIC_MULTIBOUND_SET:
         return initializeFactoryForSetMultibinding(binding);
@@ -1060,16 +1249,37 @@ abstract class AbstractComponentWriter {
       case SYNTHETIC_MULTIBOUND_MAP:
         return initializeFactoryForMapMultibinding(binding);
 
+      case SYNTHETIC_RELEASABLE_REFERENCE_MANAGER:
+        return initializeFactoryForSyntheticReleasableReferenceManagerBinding(binding);
+
+      case SYNTHETIC_RELEASABLE_REFERENCE_MANAGERS:
+        return initializeFactoryForSyntheticSetOfReleasableReferenceManagers(binding);
+
+      case SYNTHETIC_OPTIONAL_BINDING:
+        return initializeFactoryForSyntheticOptionalBinding(binding);
+
       default:
-        throw new AssertionError(binding.toString());
+        throw new AssertionError(binding);
     }
   }
 
+  private TypeElement dependencyTypeForBinding(ContributionBinding binding) {
+    return graph.componentDescriptor().dependencyMethodIndex().get(binding.bindingElement().get());
+  }
+
   private CodeBlock decorateForScope(CodeBlock factoryCreate, Scope scope) {
-    return CodeBlock.of(
-        "$T.provider($L)",
-        scope.equals(reusableScope(elements)) ? SINGLE_CHECK : DOUBLE_CHECK,
-        factoryCreate);
+    if (requiresReleasableReferences(scope)) {
+      return CodeBlock.of(
+          "$T.create($L, $L)",
+          REFERENCE_RELEASING_PROVIDER,
+          factoryCreate,
+          getReferenceReleasingProviderManagerExpression(scope));
+    } else {
+      return CodeBlock.of(
+          "$T.provider($L)",
+          scope.equals(reusableScope(elements)) ? SINGLE_CHECK : DOUBLE_CHECK,
+          factoryCreate);
+    }
   }
 
   private CodeBlock nullableAnnotation(Optional<DeclaredType> nullableType) {
@@ -1079,17 +1289,12 @@ abstract class AbstractComponentWriter {
   }
 
   private CodeBlock initializeMembersInjectorForBinding(MembersInjectionBinding binding) {
-    switch (binding.injectionStrategy()) {
-      case NO_OP:
-        return CodeBlock.of("$T.noOp()", MEMBERS_INJECTORS);
-      case INJECT_MEMBERS:
-        return CodeBlock.of(
+    return binding.injectionSites().isEmpty()
+        ? CodeBlock.of("$T.noOp()", MEMBERS_INJECTORS)
+        : CodeBlock.of(
             "$T.create($L)",
             membersInjectorNameForType(binding.membersInjectedType()),
             makeParametersCodeBlock(getDependencyArguments(binding)));
-      default:
-        throw new AssertionError();
-    }
   }
 
   /**
@@ -1097,15 +1302,13 @@ abstract class AbstractComponentWriter {
    */
   private ImmutableList<CodeBlock> getDependencyArguments(Binding binding) {
     ImmutableList.Builder<CodeBlock> parameters = ImmutableList.builder();
-    for (FrameworkDependency frameworkDependency : frameworkDependenciesForBinding(binding)) {
+    for (FrameworkDependency frameworkDependency : binding.frameworkDependencies()) {
       parameters.add(getDependencyArgument(frameworkDependency));
     }
     return parameters.build();
   }
 
-  /**
-   * The expression to use as an argument for a dependency.
-   */
+  /** Returns the expression to use as an argument for a dependency. */
   private CodeBlock getDependencyArgument(FrameworkDependency frameworkDependency) {
     BindingKey requestedKey = frameworkDependency.bindingKey();
     ResolvedBindings resolvedBindings = graph.resolvedBindings().get(requestedKey);
@@ -1113,7 +1316,9 @@ abstract class AbstractComponentWriter {
         && frameworkDependency.frameworkClass().equals(Producer.class)) {
       return producerFromProviderMemberSelects.get(requestedKey).getExpressionFor(name);
     } else {
-      return getMemberSelectExpression(requestedKey);
+      RequestFulfillment requestFulfillment =
+          requestFulfillmentRegistry.getRequestFulfillment(requestedKey);
+      return requestFulfillment.getSnippetForFrameworkDependency(frameworkDependency, name);
     }
   }
 
@@ -1132,7 +1337,7 @@ abstract class AbstractComponentWriter {
     int individualProviders = 0;
     int setProviders = 0;
     CodeBlock.Builder builderMethodCalls = CodeBlock.builder();
-    for (FrameworkDependency frameworkDependency : frameworkDependenciesForBinding(binding)) {
+    for (FrameworkDependency frameworkDependency : binding.frameworkDependencies()) {
       ContributionType contributionType =
           graph.resolvedBindings().get(frameworkDependency.bindingKey()).contributionType();
       String methodName;
@@ -1164,8 +1369,7 @@ abstract class AbstractComponentWriter {
   }
 
   private CodeBlock initializeFactoryForMapMultibinding(ContributionBinding binding) {
-    ImmutableSet<FrameworkDependency> frameworkDependencies =
-        FrameworkDependency.frameworkDependenciesForBinding(binding);
+    ImmutableList<FrameworkDependency> frameworkDependencies = binding.frameworkDependencies();
 
     ImmutableList.Builder<CodeBlock> codeBlocks = ImmutableList.builder();
     MapType mapType = MapType.from(binding.key().type());
@@ -1188,10 +1392,6 @@ abstract class AbstractComponentWriter {
               useRawTypes,
               frameworkDependency.frameworkClass(),
               getDependencyArgument(frameworkDependency));
-      if (binding.bindingType().frameworkClass().equals(Producer.class)
-          && frameworkDependency.frameworkClass().equals(Provider.class)) {
-        value = CodeBlock.of("$T.producerFromProvider($L)", PRODUCERS, value);
-      }
       codeBlocks.add(
           CodeBlock.of(
               ".put($L, $L)", getMapKeyExpression(contributionBinding.mapKey().get()), value));
@@ -1208,8 +1408,137 @@ abstract class AbstractComponentWriter {
     return CodeBlock.of("($T) $L", classToCast, notCasted);
   }
 
-  private static String simpleVariableName(TypeElement typeElement) {
-    return UPPER_CAMEL.to(LOWER_CAMEL, typeElement.getSimpleName().toString());
+  /**
+   * Initializes the factory for a {@link
+   * ContributionBinding.Kind#SYNTHETIC_RELEASABLE_REFERENCE_MANAGER} binding.
+   *
+   * <p>The {@code get()} method just returns the component field with the {@link
+   * dagger.internal.ReferenceReleasingProviderManager} object.
+   */
+  private CodeBlock initializeFactoryForSyntheticReleasableReferenceManagerBinding(
+      ContributionBinding binding) {
+    // The scope is the value of the @ForReleasableReferences annotation.
+    Scope scope = forReleasableReferencesAnnotationValue(binding.key().qualifier().get());
+
+    CodeBlock managerExpression;
+    if (MoreTypes.isTypeOf(TypedReleasableReferenceManager.class, binding.key().type())) {
+      /* The key's type is TypedReleasableReferenceManager<M>, so return
+       * new TypedReleasableReferenceManager(field, metadata). */
+      TypeMirror metadataType =
+          MoreTypes.asDeclared(binding.key().type()).getTypeArguments().get(0);
+      managerExpression =
+          typedReleasableReferenceManagerDecoratorExpression(
+              getReferenceReleasingProviderManagerExpression(scope),
+              scope.releasableReferencesMetadata(metadataType).get());
+    } else {
+      // The key's type is ReleasableReferenceManager, so return the field as is.
+      managerExpression = getReferenceReleasingProviderManagerExpression(scope);
+    }
+
+    TypeName keyType = TypeName.get(binding.key().type());
+    return CodeBlock.of(
+        "$L",
+        anonymousClassBuilder("")
+            .addSuperinterface(providerOf(keyType))
+            .addMethod(
+                methodBuilder("get")
+                    .addAnnotation(Override.class)
+                    .addModifiers(PUBLIC)
+                    .returns(keyType)
+                    .addCode("return $L;", managerExpression)
+                    .build())
+            .build());
+  }
+
+  /**
+   * Initializes the factory for a {@link
+   * ContributionBinding.Kind#SYNTHETIC_RELEASABLE_REFERENCE_MANAGERS} binding.
+   *
+   * <p>A binding for {@code Set<ReleasableReferenceManager>} will include managers for all
+   * reference-releasing scopes. A binding for {@code Set<TypedReleasableReferenceManager<M>>} will
+   * include managers for all reference-releasing scopes whose metadata type is {@code M}.
+   */
+  private CodeBlock initializeFactoryForSyntheticSetOfReleasableReferenceManagers(
+      ContributionBinding binding) {
+    Key key = binding.key();
+    SetType keyType = SetType.from(key);
+    ImmutableList.Builder<CodeBlock> managerExpressions = ImmutableList.builder();
+    for (Map.Entry<Scope, MemberSelect> entry :
+        referenceReleasingProviderManagerFields.entrySet()) {
+      Scope scope = entry.getKey();
+      CodeBlock releasableReferenceManagerExpression = entry.getValue().getExpressionFor(name);
+
+      if (keyType.elementsAreTypeOf(ReleasableReferenceManager.class)) {
+        managerExpressions.add(releasableReferenceManagerExpression);
+      } else if (keyType.elementsAreTypeOf(TypedReleasableReferenceManager.class)) {
+        TypeMirror metadataType =
+            keyType.unwrappedElementType(TypedReleasableReferenceManager.class);
+        Optional<AnnotationMirror> metadata = scope.releasableReferencesMetadata(metadataType);
+        if (metadata.isPresent()) {
+          managerExpressions.add(
+              typedReleasableReferenceManagerDecoratorExpression(
+                  releasableReferenceManagerExpression, metadata.get()));
+        }
+      } else {
+        throw new IllegalArgumentException("inappropriate key: " + binding);
+      }
+    }
+    TypeName keyTypeName = TypeName.get(key.type());
+    return CodeBlock.of(
+        "$L",
+        anonymousClassBuilder("")
+            .addSuperinterface(providerOf(keyTypeName))
+            .addMethod(
+                methodBuilder("get")
+                    .addAnnotation(Override.class)
+                    .addModifiers(PUBLIC)
+                    .returns(keyTypeName)
+                    .addCode(
+                        "return new $T($T.asList($L));",
+                        HashSet.class,
+                        Arrays.class,
+                        makeParametersCodeBlock(managerExpressions.build()))
+                    .build())
+            .build());
+  }
+
+  /**
+   * Returns an expression that evaluates to a {@link TypedReleasableReferenceManagerDecorator} that
+   * decorates the {@code managerExpression} to supply {@code metadata}.
+   */
+  private CodeBlock typedReleasableReferenceManagerDecoratorExpression(
+      CodeBlock managerExpression, AnnotationMirror metadata) {
+    return CodeBlock.of(
+        "new $T($L, $L)",
+        ParameterizedTypeName.get(
+            TYPED_RELEASABLE_REFERENCE_MANAGER_DECORATOR,
+            TypeName.get(metadata.getAnnotationType())),
+        managerExpression,
+        new AnnotationExpression(metadata).getAnnotationInstanceExpression());
+  }
+
+  private Scope forReleasableReferencesAnnotationValue(AnnotationMirror annotation) {
+    checkArgument(
+        MoreTypes.isTypeOf(ForReleasableReferences.class, annotation.getAnnotationType()));
+    return Scope.scope(
+        MoreElements.asType(MoreTypes.asDeclared(getTypeValue(annotation, "value")).asElement()));
+  }
+
+  /**
+   * Returns an expression that initializes a {@link Provider} or {@link Producer} for an optional
+   * binding.
+   */
+  private CodeBlock initializeFactoryForSyntheticOptionalBinding(ContributionBinding binding) {
+    if (binding.explicitDependencies().isEmpty()) {
+      verify(
+          binding.bindingType().equals(BindingType.PROVISION),
+          "Absent optional bindings should be provisions: %s",
+          binding);
+      return optionalFactories.absentOptionalProvider(binding);
+    } else {
+      return optionalFactories.presentOptionalFactory(
+          binding, getOnlyElement(getDependencyArguments(binding)));
+    }
   }
 
   /**

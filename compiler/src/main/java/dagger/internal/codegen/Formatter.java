@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Google, Inc.
+ * Copyright (C) 2014 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,12 +13,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.internal.codegen;
+
+import static com.google.common.base.Preconditions.checkElementIndex;
+import static dagger.internal.codegen.ErrorMessages.INDENT;
 
 import com.google.common.base.Function;
 import com.google.common.collect.Iterables;
-
-import static dagger.internal.codegen.ErrorMessages.INDENT;
 
 /**
  * A formatter which transforms an instance of a particular type into a string
@@ -36,16 +38,16 @@ abstract class Formatter<T> implements Function<T, String> {
   public abstract String format(T object);
 
   /**
-   * Performs the transformation of an object into a string representation in
-   * conformity with the {@link Function}{@code <T, String>} contract, delegating
-   * to {@link #format(Object)}.
+   * Performs the transformation of an object into a string representation in conformity with the
+   * {@link Function}{@code <T, String>} contract, delegating to {@link #format(Object)}.
    *
-   * @deprecated Call {@link #format(T)} instead.  This method exists to make
-   * formatters easy to use when functions are required, but shouldn't be called directly.
+   * @deprecated Call {@link #format(Object)} instead. This method exists to make formatters easy to
+   *     use when functions are required, but shouldn't be called directly.
    */
   @SuppressWarnings("javadoc")
   @Deprecated
-  @Override final public String apply(T object) {
+  @Override
+  public final String apply(T object) {
     return format(object);
   }
 
@@ -83,5 +85,18 @@ abstract class Formatter<T> implements Function<T, String> {
     for (int i = 0; i < indentLevel; i++) {
       builder.append(INDENT);
     }
+  }
+
+  protected String formatArgumentInList(int index, int size, CharSequence name) {
+    checkElementIndex(index, size);
+    StringBuilder builder = new StringBuilder();
+    if (index > 0) {
+      builder.append("…, ");
+    }
+    builder.append(name);
+    if (index < size - 1) {
+      builder.append(", …");
+    }
+    return builder.toString();
   }
 }

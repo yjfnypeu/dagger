@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Google, Inc.
+ * Copyright (C) 2014 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,17 +13,21 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.internal.codegen;
 
+import static com.google.common.truth.Truth.assertAbout;
+import static com.google.testing.compile.CompilationSubject.assertThat;
+import static com.google.testing.compile.JavaSourcesSubjectFactory.javaSources;
+import static dagger.internal.codegen.Compilers.daggerCompiler;
+
 import com.google.common.collect.ImmutableList;
+import com.google.testing.compile.Compilation;
 import com.google.testing.compile.JavaFileObjects;
 import javax.tools.JavaFileObject;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
-
-import static com.google.common.truth.Truth.assertAbout;
-import static com.google.testing.compile.JavaSourcesSubjectFactory.javaSources;
 
 /**
  * Unit tests for {@link BindingGraphValidator} that exercise producer-specific logic.
@@ -148,35 +152,96 @@ public class ProductionGraphValidationTest {
   }
 
   @Test public void provisionEntryPointDependsOnProduction() {
-    JavaFileObject component = JavaFileObjects.forSourceLines("test.TestClass",
-        "package test;",
-        "",
-        "import com.google.common.util.concurrent.ListenableFuture;",
-        "import dagger.producers.ProducerModule;",
-        "import dagger.producers.Produces;",
-        "import dagger.producers.ProductionComponent;",
-        "",
-        "final class TestClass {",
-        "  interface A {}",
-        "",
-        "  @ProducerModule",
-        "  final class AModule {",
-        "    @Produces ListenableFuture<A> a() {",
-        "      return null;",
-        "    }",
-        "  }",
-        "",
-        "  @ProductionComponent(modules = {ExecutorModule.class, AModule.class})",
-        "  interface AComponent {",
-        "    A getA();",
-        "  }",
-        "}");
+    JavaFileObject component =
+        JavaFileObjects.forSourceLines(
+            "test.TestClass",
+            "package test;",
+            "",
+            "import com.google.common.util.concurrent.ListenableFuture;",
+            "import dagger.producers.ProducerModule;",
+            "import dagger.producers.Produces;",
+            "import dagger.producers.ProductionComponent;",
+            "",
+            "final class TestClass {",
+            "  interface A {}",
+            "",
+            "  @ProducerModule",
+            "  static final class AModule {",
+            "    @Produces ListenableFuture<A> a() {",
+            "      return null;",
+            "    }",
+            "  }",
+            "",
+            "  @ProductionComponent(modules = {ExecutorModule.class, AModule.class})",
+            "  interface AComponent {",
+            "    A getA();",
+            "  }",
+            "}");
     String expectedError =
         "test.TestClass.A is a provision entry-point, which cannot depend on a production.";
     assertAbout(javaSources()).that(ImmutableList.of(EXECUTOR_MODULE, component))
         .processedWith(new ComponentProcessor())
         .failsToCompile()
         .withErrorContaining(expectedError).in(component).onLine(20);
+  }
+
+  @Test
+  public void providingMultibindingWithProductions() {
+    JavaFileObject component =
+        JavaFileObjects.forSourceLines(
+            "test.TestClass",
+            "package test;",
+            "",
+            "import com.google.common.util.concurrent.ListenableFuture;",
+            "import dagger.Module;",
+            "import dagger.Provides;",
+            "import dagger.multibindings.IntoMap;",
+            "import dagger.multibindings.StringKey;",
+            "import dagger.producers.ProducerModule;",
+            "import dagger.producers.Produces;",
+            "import dagger.producers.ProductionComponent;",
+            "import java.util.Map;",
+            "import javax.inject.Provider;",
+            "",
+            "final class TestClass {",
+            "  interface A {}",
+            "  interface B {}",
+            "",
+            "  @Module",
+            "  static final class AModule {",
+            "    @Provides static A a(Map<String, Provider<Object>> map) {",
+            "      return null;",
+            "    }",
+            "",
+            "    @Provides @IntoMap @StringKey(\"a\") static Object aEntry() {",
+            "      return \"a\";",
+            "    }",
+            "  }",
+            "",
+            "  @ProducerModule",
+            "  static final class BModule {",
+            "    @Produces static B b(A a) {",
+            "      return null;",
+            "    }",
+            "",
+            "    @Produces @IntoMap @StringKey(\"b\") static Object bEntry() {",
+            "      return \"b\";",
+            "    }",
+            "  }",
+            "",
+            "  @ProductionComponent(",
+            "      modules = {ExecutorModule.class, AModule.class, BModule.class})",
+            "  interface AComponent {",
+            "    ListenableFuture<B> b();",
+            "  }",
+            "}");
+    assertAbout(javaSources())
+        .that(ImmutableList.of(EXECUTOR_MODULE, component))
+        .processedWith(new ComponentProcessor())
+        .failsToCompile()
+        .withErrorContaining("test.TestClass.A is a provision, which cannot depend on a production")
+        .in(component)
+        .onLine(43);
   }
 
   @Test
@@ -275,9 +340,8 @@ public class ProductionGraphValidationTest {
             "  }",
             "}");
     String expectedError =
-        "@Provides @dagger.multibindings.IntoSet"
-            + " dagger.producers.monitoring.ProductionComponentMonitor.Factory"
-            + " test.TestClass.MonitoringModule.monitorFactory(test.TestClass.A) is a provision,"
+        "java.util.Set<dagger.producers.monitoring.ProductionComponentMonitor.Factory>"
+            + " test.TestClass.MonitoringModule#monitorFactory is a provision,"
             + " which cannot depend on a production.";
     assertAbout(javaSources()).that(ImmutableList.of(EXECUTOR_MODULE, component))
         .processedWith(new ComponentProcessor())
@@ -286,7 +350,7 @@ public class ProductionGraphValidationTest {
         .in(component)
         .onLine(37);
   }
-  
+
   @Test
   public void cycleNotBrokenByMap() {
     JavaFileObject component =
@@ -376,5 +440,45 @@ public class ProductionGraphValidationTest {
         .withErrorContaining("cycle")
         .in(component)
         .onLine(8);
+  }
+  
+  @Test
+  public void componentWithBadModule() {
+    JavaFileObject badModule =
+        JavaFileObjects.forSourceLines(
+            "test.BadModule",
+            "package test;",
+            "",
+            "import dagger.BindsOptionalOf;",
+            "import dagger.multibindings.Multibinds;",
+            "import dagger.Module;",
+            "import java.util.Set;",
+            "",
+            "@Module",
+            "abstract class BadModule {",
+            "  @Multibinds",
+            "  @BindsOptionalOf",
+            "  abstract Set<String> strings();",
+            "}");
+    JavaFileObject badComponent =
+        JavaFileObjects.forSourceLines(
+            "test.BadComponent",
+            "package test;",
+            "",
+            "import dagger.Component;",
+            "import java.util.Optional;",
+            "import java.util.Set;",
+            "",
+            "@Component(modules = BadModule.class)",
+            "interface BadComponent {",
+            "  Set<String> strings();",
+            "  Optional<Set<String>> optionalStrings();",
+            "}");
+    Compilation compilation = daggerCompiler().compile(badModule, badComponent);
+    assertThat(compilation).failed();
+    assertThat(compilation)
+        .hadErrorContaining("test.BadModule has errors")
+        .inFile(badComponent)
+        .onLine(7);
   }
 }

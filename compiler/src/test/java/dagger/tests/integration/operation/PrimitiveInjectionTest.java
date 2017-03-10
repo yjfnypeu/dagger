@@ -1,6 +1,5 @@
 /**
- * Copyright (C) 2013 Google, Inc.
- * Copyright (C) 2013 Square, Inc.
+ * Copyright (C) 2013 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,7 +13,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.tests.integration.operation;
+
+import static com.google.common.truth.Truth.assertAbout;
+import static com.google.testing.compile.JavaSourcesSubjectFactory.javaSources;
+import static dagger.internal.codegen.GeneratedLines.GENERATED_ANNOTATION;
+import static java.util.Arrays.asList;
 
 import com.google.testing.compile.JavaFileObjects;
 import dagger.internal.codegen.ComponentProcessor;
@@ -22,11 +27,6 @@ import javax.tools.JavaFileObject;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
-
-import static com.google.common.truth.Truth.assert_;
-import static com.google.testing.compile.JavaSourcesSubjectFactory.javaSources;
-import static dagger.internal.codegen.GeneratedLines.GENERATED_ANNOTATION;
-import static java.util.Arrays.asList;
 
 @RunWith(JUnit4.class)
 public final class PrimitiveInjectionTest {
@@ -49,14 +49,16 @@ public final class PrimitiveInjectionTest {
       "  @Inject PrimitiveInjectable(int ignored) {}",
       "}");
 
-  JavaFileObject primitiveModule = JavaFileObjects.forSourceLines("test.PrimitiveModule",
-      "package test;",
-      "import dagger.Module;",
-      "import dagger.Provides;",
-      "@Module",
-      "class PrimitiveModule {",
-      "  @Provides int primitiveInt() { return Integer.MAX_VALUE; }",
-      "}");
+  JavaFileObject primitiveModule =
+      JavaFileObjects.forSourceLines(
+          "test.PrimitiveModule",
+          "package test;",
+          "import dagger.Module;",
+          "import dagger.Provides;",
+          "@Module",
+          "class PrimitiveModule {",
+          "  @Provides static int primitiveInt() { return Integer.MAX_VALUE; }",
+          "}");
 
   JavaFileObject component = JavaFileObjects.forSourceLines("test.PrimitiveComponent",
       "package test;",
@@ -68,75 +70,70 @@ public final class PrimitiveInjectionTest {
       "  PrimitiveInjectable primitiveInjectable();",
       "}");
 
-  JavaFileObject expectedComponent = JavaFileObjects.forSourceLines(
-      "test.DaggerPrimitiveComponent",
-      "package test;",
-      "",
-      "import dagger.internal.Preconditions;",
-      "import javax.annotation.Generated;",
-      "import javax.inject.Provider;",
-      "",
-      GENERATED_ANNOTATION,
-      "public final class DaggerPrimitiveComponent implements PrimitiveComponent {",
-      "  private Provider<Integer> primitiveIntProvider;",
-      "  private Provider<PrimitiveInjectable> primitiveInjectableProvider;",
-      "",
-      "  private DaggerPrimitiveComponent(Builder builder) {",
-      "    assert builder != null;",
-      "    initialize(builder);",
-      "  }",
-      "",
-      "  public static Builder builder() {",
-      "    return new Builder();",
-      "  }",
-      "",
-      "  public static PrimitiveComponent create() {",
-      "    return builder().build();",
-      "  }",
-      "",
-      "  @SuppressWarnings(\"unchecked\")",
-      "  private void initialize(final Builder builder) {",
-      "    this.primitiveIntProvider =",
-      "        PrimitiveModule_PrimitiveIntFactory.create(builder.primitiveModule);",
-      "    this.primitiveInjectableProvider =",
-      "        PrimitiveInjectable_Factory.create(primitiveIntProvider);",
-      "  }",
-      "",
-      "  @Override",
-      "  public int primitiveInt() {",
-      "    return primitiveIntProvider.get();",
-      "  }",
-      "",
-      "  @Override",
-      "  public PrimitiveInjectable primitiveInjectable() {",
-      "    return primitiveInjectableProvider.get();",
-      "  }",
-      "",
-      "  public static final class Builder {",
-      "    private PrimitiveModule primitiveModule;",
-      "",
-      "    private Builder() {",
-      "    }",
-      "",
-      "    public PrimitiveComponent build() {",
-      "      if (primitiveModule == null) {",
-      "        this.primitiveModule = new PrimitiveModule();",
-      "      }",
-      "      return new DaggerPrimitiveComponent(this);",
-      "    }",
-      "",
-      "    public Builder primitiveModule(PrimitiveModule primitiveModule) {",
-      "      this.primitiveModule = Preconditions.checkNotNull(primitiveModule);",
-      "      return this;",
-      "    }",
-      "  }",
-      "}");
+  JavaFileObject expectedComponent =
+      JavaFileObjects.forSourceLines(
+          "test.DaggerPrimitiveComponent",
+          "package test;",
+          "",
+          "import dagger.internal.Preconditions;",
+          "import javax.annotation.Generated;",
+          "import javax.inject.Provider;",
+          "",
+          GENERATED_ANNOTATION,
+          "public final class DaggerPrimitiveComponent implements PrimitiveComponent {",
+          "  private Provider<PrimitiveInjectable> primitiveInjectableProvider;",
+          "",
+          "  private DaggerPrimitiveComponent(Builder builder) {",
+          "    assert builder != null;",
+          "    initialize(builder);",
+          "  }",
+          "",
+          "  public static Builder builder() {",
+          "    return new Builder();",
+          "  }",
+          "",
+          "  public static PrimitiveComponent create() {",
+          "    return new Builder().build();",
+          "  }",
+          "",
+          "  @SuppressWarnings(\"unchecked\")",
+          "  private void initialize(final Builder builder) {",
+          "    this.primitiveInjectableProvider = PrimitiveInjectable_Factory.create(",
+          "        PrimitiveModule_PrimitiveIntFactory.create());",
+          "  }",
+          "",
+          "  @Override",
+          "  public int primitiveInt() {",
+          "    return PrimitiveModule.primitiveInt();",
+          "  }",
+          "",
+          "  @Override",
+          "  public PrimitiveInjectable primitiveInjectable() {",
+          "    return new PrimitiveInjectable(PrimitiveModule.primitiveInt());",
+          "  }",
+          "",
+          "  public static final class Builder {",
+          "",
+          "    private Builder() {}",
+          "",
+          "    public PrimitiveComponent build() {",
+          "      return new DaggerPrimitiveComponent(this);",
+          "    }",
+          "",
+          "    @Deprecated",
+          "    public Builder primitiveModule(PrimitiveModule primitiveModule) {",
+          "      Preconditions.checkNotNull(primitiveModule);",
+          "      return this;",
+          "    }",
+          "  }",
+          "}");
 
   @Test public void primitiveArrayTypesAllInjected() {
-    assert_().about(javaSources())
+    assertAbout(javaSources())
         .that(asList(component, primitiveInjectable, primitiveModule))
         .processedWith(new ComponentProcessor())
         .compilesWithoutError()
-        .and().generatesSources(expectedComponent);
+        .and()
+        .generatesSources(expectedComponent);
   }
 }

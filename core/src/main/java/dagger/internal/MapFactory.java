@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Google, Inc.
+ * Copyright (C) 2014 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,14 +13,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.internal;
+
+import static dagger.internal.DaggerCollections.newLinkedHashMapWithExpectedSize;
+import static java.util.Collections.unmodifiableMap;
 
 import java.util.Map;
 import java.util.Map.Entry;
 import javax.inject.Provider;
-
-import static dagger.internal.DaggerCollections.newLinkedHashMapWithExpectedSize;
-import static java.util.Collections.unmodifiableMap;
 
 /**
  * A {@link Factory} implementation used to implement {@link Map} bindings. This factory returns a

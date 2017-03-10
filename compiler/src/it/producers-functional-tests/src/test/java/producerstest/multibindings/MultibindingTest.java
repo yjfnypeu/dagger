@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Google, Inc.
+ * Copyright (C) 2016 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package producerstest.multibindings;
+
+import static com.google.common.truth.Truth.assertThat;
+import static org.junit.Assert.fail;
 
 import com.google.common.collect.Iterables;
 import com.google.common.util.concurrent.ListenableFuture;
@@ -27,9 +31,6 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
-import static com.google.common.truth.Truth.assertThat;
-import static org.junit.Assert.fail;
-
 @RunWith(JUnit4.class)
 public class MultibindingTest {
   @Test
@@ -40,13 +41,15 @@ public class MultibindingTest {
             "foo",
             "foo1",
             "foo2",
+            "baz1",
+            "baz2",
             "bar",
             "bar1",
             "bar2",
             "providedStr",
             "providedStr1",
             "providedStr2");
-    assertThat(multibindingComponent.strCount().get()).isEqualTo(9);
+    assertThat(multibindingComponent.strCount().get()).isEqualTo(11);
   }
 
   @Test
@@ -57,6 +60,8 @@ public class MultibindingTest {
             Produced.successful("foo"),
             Produced.successful("foo1"),
             Produced.successful("foo2"),
+            Produced.successful("baz1"),
+            Produced.successful("baz2"),
             Produced.successful("bar"),
             Produced.successful("bar1"),
             Produced.successful("bar2"),

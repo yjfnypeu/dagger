@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 Google, Inc.
+ * Copyright (C) 2015 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package test.multipackage.b;
 
 import javax.inject.Inject;
@@ -30,6 +31,7 @@ public class BChild extends AParent {
     this.aChildMethod = aChildMethod;
   }
 
+  @SuppressWarnings("OverridesJavaxInjectableMethod")
   @Override
   protected void aParentMethod(APublicObject aParentMethod) {
     super.aParentMethod(aParentMethod);

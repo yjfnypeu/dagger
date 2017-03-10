@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 Google, Inc.
+ * Copyright (C) 2015 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.internal.codegen;
+
+import static com.google.common.truth.Truth.assertAbout;
+import static com.google.testing.compile.JavaSourceSubjectFactory.javaSource;
+import static com.google.testing.compile.JavaSourcesSubject.assertThat;
+import static com.google.testing.compile.JavaSourcesSubjectFactory.javaSources;
+import static dagger.internal.codegen.ErrorMessages.INJECT_INTO_PRIVATE_CLASS;
+import static dagger.internal.codegen.GeneratedLines.GENERATED_ANNOTATION;
+import static javax.tools.StandardLocation.CLASS_OUTPUT;
 
 import com.google.common.base.Joiner;
 import com.google.common.collect.ImmutableList;
@@ -29,13 +38,6 @@ import javax.tools.JavaFileObject;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
-
-import static com.google.common.truth.Truth.assertAbout;
-import static com.google.testing.compile.JavaSourceSubjectFactory.javaSource;
-import static com.google.testing.compile.JavaSourcesSubjectFactory.javaSources;
-import static dagger.internal.codegen.ErrorMessages.INJECT_INTO_PRIVATE_CLASS;
-import static dagger.internal.codegen.GeneratedLines.GENERATED_ANNOTATION;
-import static javax.tools.StandardLocation.CLASS_OUTPUT;
 
 @RunWith(JUnit4.class)
 public class MembersInjectionTest {
@@ -86,7 +88,7 @@ public class MembersInjectionTest {
         "  }",
         "",
         "  public static TestComponent create() {",
-        "    return builder().build();",
+        "    return new Builder().build();",
         "  }",
         "",
         "  @SuppressWarnings(\"unchecked\")",
@@ -176,7 +178,7 @@ public class MembersInjectionTest {
             "  }",
             "",
             "  public static TestComponent create() {",
-            "    return builder().build();",
+            "    return new Builder().build();",
             "  }",
             "",
             "  @SuppressWarnings(\"unchecked\")",
@@ -1080,5 +1082,36 @@ public class MembersInjectionTest {
         .that(file)
         .processedWith(new ComponentProcessor())
         .compilesWithoutError();
+  }
+
+  @Test public void rawFrameworkTypes() {
+    JavaFileObject file =
+        JavaFileObjects.forSourceLines(
+            "test.RawFrameworkTypes",
+            "package test;",
+            "",
+            "import dagger.Component;",
+            "import javax.inject.Inject;",
+            "import javax.inject.Provider;",
+            "",
+            "class RawProviderField {",
+            "  @Inject Provider fieldWithRawProvider;",
+            "}",
+            "",
+            "class RawProviderParameter {",
+            "  @Inject void methodInjection(Provider rawProviderParameter) {}",
+            "}",
+            "",
+            "@Component",
+            "interface C {",
+            "  void inject(RawProviderField rawProviderField);",
+            "  void inject(RawProviderParameter rawProviderParameter);",
+            "}");
+    assertThat(file)
+        .processedWith(new ComponentProcessor())
+        .failsToCompile()
+        .withErrorContaining("javax.inject.Provider cannot be provided").in(file).onLine(17)
+        .and()
+        .withErrorContaining("javax.inject.Provider cannot be provided").in(file).onLine(18);
   }
 }

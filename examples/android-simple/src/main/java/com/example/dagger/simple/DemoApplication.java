@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013 Square, Inc.
+ * Copyright (C) 2013 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,14 +13,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package com.example.dagger.simple;
 
 import android.app.Application;
 import android.location.LocationManager;
 import com.example.dagger.simple.ui.HomeActivity;
 import dagger.Component;
-import java.util.Arrays;
-import java.util.List;
 import javax.inject.Inject;
 import javax.inject.Singleton;
 

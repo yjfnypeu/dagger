@@ -1,5 +1,5 @@
 /*
-* Copyright (C) 2015 Google, Inc.
+* Copyright (C) 2015 The Dagger Authors.
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -13,6 +13,7 @@
 * See the License for the specific language governing permissions and
 * limitations under the License.
 */
+
 package producerstest;
 
 import com.google.common.collect.ImmutableSet;
@@ -267,5 +268,14 @@ final class SimpleProducerModule {
       throws IOException {
     return Futures.<Set<String>>immediateFuture(
         ImmutableSet.of("set of str with arg 1", "set of str with arg 2 throwing exception"));
+  }
+
+  /**
+   * A binding method that might result in a generated factory with conflicting field and parameter
+   * names.
+   */
+  @Produces
+  static Object object(int foo, Provider<String> fooProvider) {
+    return foo + fooProvider.get();
   }
 }

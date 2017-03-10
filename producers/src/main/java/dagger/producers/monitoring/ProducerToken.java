@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 Google Inc.
+ * Copyright (C) 2015 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,13 +13,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.producers.monitoring;
+
+import static com.google.common.base.Preconditions.checkNotNull;
 
 import dagger.producers.Produces;
 import java.util.Objects;
 import javax.annotation.Nullable;
-
-import static com.google.common.base.Preconditions.checkNotNull;
 
 /** A token that represents an individual {@linkplain Produces producer method}. */
 public final class ProducerToken {
@@ -82,7 +83,7 @@ public final class ProducerToken {
     if (methodName != null) {
       return methodName;
     } else if (classToken != null) {
-      return classToken.toString();
+      return classToken.getCanonicalName();
     } else {
       throw new IllegalStateException();
     }

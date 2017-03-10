@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 Google, Inc.
+ * Copyright (C) 2015 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,11 +13,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.internal.codegen;
 
-import com.google.common.base.Function;
-import com.google.common.base.Predicate;
-import com.google.common.base.Predicates;
+import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Sets;
+import com.squareup.javapoet.ClassName;
+import com.squareup.javapoet.ParameterizedTypeName;
+import com.squareup.javapoet.TypeName;
 import dagger.MembersInjector;
 import dagger.producers.Producer;
 import javax.inject.Provider;
@@ -36,6 +39,13 @@ enum BindingType {
   PRODUCTION(Producer.class),
   ;
 
+  boolean isOfType(HasBindingType hasBindingType) {
+    return this.equals(hasBindingType.bindingType());
+  }
+
+  static final ImmutableSet<BindingType> CONTRIBUTION_TYPES =
+      Sets.immutableEnumSet(PROVISION, PRODUCTION);
+
   /** An object that is associated with a {@link BindingType}. */
   interface HasBindingType {
     /** The binding type of this object. */
@@ -44,7 +54,7 @@ enum BindingType {
 
   private final Class<?> frameworkClass;
 
-  private BindingType(Class<?> frameworkClass) {
+  BindingType(Class<?> frameworkClass) {
     this.frameworkClass = frameworkClass;
   }
 
@@ -53,17 +63,8 @@ enum BindingType {
     return frameworkClass;
   }
 
-  /** A predicate that passes for {@link HasBindingType}s with a given type. */
-  static Predicate<HasBindingType> isOfType(BindingType type) {
-    return Predicates.compose(Predicates.equalTo(type), BINDING_TYPE);
+  /** Returns the {@link #frameworkClass()} parameterized with a type. */
+  ParameterizedTypeName frameworkClassOf(TypeName valueType) {
+    return ParameterizedTypeName.get(ClassName.get(frameworkClass()), valueType);
   }
-
-  /** A function that returns {@link HasBindingType#bindingType()}. */
-  static Function<HasBindingType, BindingType> BINDING_TYPE =
-      new Function<HasBindingType, BindingType>() {
-        @Override
-        public BindingType apply(HasBindingType hasBindingType) {
-          return hasBindingType.bindingType();
-        }
-      };
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Google, Inc.
+ * Copyright (C) 2016 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.producers.internal;
+
+import static com.google.common.util.concurrent.Futures.transform;
+import static com.google.common.util.concurrent.MoreExecutors.directExecutor;
 
 import com.google.common.base.Function;
 import com.google.common.collect.ImmutableMap;
@@ -64,7 +68,7 @@ public final class MapProducer<K, V> extends AbstractProducer<Map<K, V>> {
           @Override
           public ListenableFuture<Map<K, V>> apply(final Map<K, Producer<V>> map) {
             // TODO(beder): Use Futures.whenAllComplete when Guava 20 is released.
-            return Futures.transform(
+            return transform(
                 Futures.allAsList(
                     Iterables.transform(map.entrySet(), MapProducer.<K, V>entryUnwrapper())),
                 new Function<List<Map.Entry<K, V>>, Map<K, V>>() {
@@ -72,9 +76,11 @@ public final class MapProducer<K, V> extends AbstractProducer<Map<K, V>> {
                   public Map<K, V> apply(List<Map.Entry<K, V>> entries) {
                     return ImmutableMap.copyOf(entries);
                   }
-                });
+                },
+                directExecutor());
           }
-        });
+        },
+        directExecutor());
   }
 
   private static final Function<
@@ -85,14 +91,15 @@ public final class MapProducer<K, V> extends AbstractProducer<Map<K, V>> {
             @Override
             public ListenableFuture<Map.Entry<Object, Object>> apply(
                 final Map.Entry<Object, Producer<Object>> entry) {
-              return Futures.transform(
+              return transform(
                   entry.getValue().get(),
                   new Function<Object, Map.Entry<Object, Object>>() {
                     @Override
                     public Map.Entry<Object, Object> apply(Object value) {
                       return Maps.immutableEntry(entry.getKey(), value);
                     }
-                  });
+                  },
+                  directExecutor());
             }
           };
 

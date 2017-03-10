@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Google, Inc.
+ * Copyright (C) 2014 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,37 +13,41 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.internal.codegen;
+
+import static com.google.common.collect.Sets.immutableEnumSet;
+import static dagger.internal.codegen.ContributionBinding.FactoryCreationStrategy.CLASS_CONSTRUCTOR;
+import static dagger.internal.codegen.ContributionBinding.FactoryCreationStrategy.DELEGATE;
+import static dagger.internal.codegen.ContributionBinding.FactoryCreationStrategy.SINGLETON_INSTANCE;
+import static dagger.internal.codegen.MapKeys.unwrapValue;
+import static dagger.internal.codegen.MoreAnnotationMirrors.unwrapOptionalEquivalence;
+import static javax.lang.model.element.Modifier.ABSTRACT;
+import static javax.lang.model.element.Modifier.STATIC;
 
 import com.google.auto.common.MoreTypes;
 import com.google.common.base.Equivalence;
 import com.google.common.base.Equivalence.Wrapper;
-import com.google.common.base.Function;
-import com.google.common.base.Optional;
-import com.google.common.base.Predicate;
-import com.google.common.base.Predicates;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSetMultimap;
 import com.google.common.collect.Multimaps;
-import com.google.common.collect.Sets;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import dagger.Component;
 import dagger.MapKey;
 import dagger.Provides;
 import dagger.internal.codegen.ContributionType.HasContributionType;
 import dagger.producers.Produces;
-import dagger.producers.ProductionComponent;
+import java.util.Optional;
 import java.util.Set;
 import javax.inject.Inject;
 import javax.lang.model.element.AnnotationMirror;
 import javax.lang.model.element.AnnotationValue;
+import javax.lang.model.element.Element;
+import javax.lang.model.element.Modifier;
+import javax.lang.model.element.TypeElement;
 import javax.lang.model.type.DeclaredType;
 import javax.lang.model.type.TypeMirror;
-
-import static com.google.common.collect.Sets.immutableEnumSet;
-import static dagger.internal.codegen.ContributionBinding.Kind.IS_SYNTHETIC_KIND;
-import static dagger.internal.codegen.MapKeys.unwrapValue;
-import static dagger.internal.codegen.MoreAnnotationMirrors.unwrapOptionalEquivalence;
-import static javax.lang.model.element.Modifier.STATIC;
 
 /**
  * An abstract class for a value object representing the mechanism by which a {@link Key} can be
@@ -54,41 +58,8 @@ import static javax.lang.model.element.Modifier.STATIC;
  */
 abstract class ContributionBinding extends Binding implements HasContributionType {
 
-  @Override
-  Set<DependencyRequest> implicitDependencies() {
-    // Optimization: If we don't need the memberInjectionRequest, don't create more objects.
-    if (!membersInjectionRequest().isPresent()) {
-      return dependencies();
-    } else {
-      // Optimization: Avoid creating an ImmutableSet+Builder just to union two things together.
-      return Sets.union(membersInjectionRequest().asSet(), dependencies());
-    }
-  }
-
   /** Returns the type that specifies this' nullability, absent if not nullable. */
   abstract Optional<DeclaredType> nullableType();
-
-  /**
-   * Returns whether this binding is synthetic, i.e., not explicitly tied to code, but generated
-   * implicitly by the framework.
-   */
-  boolean isSyntheticBinding() {
-    return IS_SYNTHETIC_KIND.apply(bindingKind());
-  }
-
-  /**
-   * A function that returns the kind of a binding.
-   */
-  static final Function<ContributionBinding, Kind> KIND =
-      new Function<ContributionBinding, Kind>() {
-        @Override
-        public Kind apply(ContributionBinding binding) {
-          return binding.bindingKind();
-        }
-      };
-
-  /** If this provision requires members injection, this will be the corresponding request. */
-  abstract Optional<DependencyRequest> membersInjectionRequest();
 
   abstract Optional<Equivalence.Wrapper<AnnotationMirror>> wrappedMapKey();
 
@@ -125,6 +96,25 @@ abstract class ContributionBinding extends Binding implements HasContributionTyp
      */
     SYNTHETIC_DELEGATE_BINDING,
 
+    /**
+     * A binding for a {@link dagger.releasablereferences.ReleasableReferenceManager} or {@link
+     * dagger.releasablereferences.TypedReleasableReferenceManager} object for a scope.
+     */
+    SYNTHETIC_RELEASABLE_REFERENCE_MANAGER,
+
+    /**
+     * A binding for a set of {@link dagger.releasablereferences.ReleasableReferenceManager} or
+     * {@link dagger.releasablereferences.TypedReleasableReferenceManager} objects.
+     */
+    SYNTHETIC_RELEASABLE_REFERENCE_MANAGERS,
+
+    /**
+     * A synthetic binding for {@code Optional} of a type or a {@link javax.inject.Provider}, {@link
+     * dagger.Lazy}, or {@code Provider} of {@code Lazy} of a type. Generated by a {@link
+     * dagger.BindsOptionalOf} declaration.
+     */
+    SYNTHETIC_OPTIONAL_BINDING,
+
     // Provision kinds
 
     /** An {@link Inject}-annotated constructor. */
@@ -144,53 +134,36 @@ abstract class ContributionBinding extends Binding implements HasContributionTyp
      */
     SUBCOMPONENT_BUILDER,
 
+    /** A builder binding method. */
+    BUILDER_BINDING,
+
     // Production kinds
 
-    /** A {@link Produces}-annotated method that doesn't return a {@link ListenableFuture}. */
-    IMMEDIATE,
-
-    /** A {@link Produces}-annotated method that returns a {@link ListenableFuture}. */
-    FUTURE_PRODUCTION,
+    /** A {@link Produces}-annotated method. */
+    PRODUCTION,
 
     /**
-     * A production method on a production component's
-     * {@linkplain ProductionComponent#dependencies() dependency} that returns a
+     * A production method on a production component's {@linkplain
+     * dagger.producers.ProductionComponent#dependencies()} dependency} that returns a
      * {@link ListenableFuture}. Methods on production component dependencies that don't return a
      * {@link ListenableFuture} are considered {@linkplain #PROVISION provision bindings}.
      */
     COMPONENT_PRODUCTION,
     ;
 
-    /**
-     * A predicate that tests whether a kind is for synthetic bindings.
-     */
-    static final Predicate<Kind> IS_SYNTHETIC_KIND =
-        Predicates.in(
-            immutableEnumSet(
-                SYNTHETIC_MAP,
-                SYNTHETIC_MULTIBOUND_SET,
-                SYNTHETIC_MULTIBOUND_MAP,
-                SYNTHETIC_DELEGATE_BINDING));
+    static final ImmutableSet<Kind> SYNTHETIC_MULTIBOUND_KINDS =
+        immutableEnumSet(SYNTHETIC_MULTIBOUND_SET, SYNTHETIC_MULTIBOUND_MAP);
 
     /**
-     * A predicate that tests whether a kind is for synthetic multibindings.
+     * {@link #SYNTHETIC_MULTIBOUND_SET} or {@link #SYNTHETIC_MULTIBOUND_MAP}, depending on the key.
      */
-    static final Predicate<Kind> IS_SYNTHETIC_MULTIBINDING_KIND =
-        Predicates.in(immutableEnumSet(SYNTHETIC_MULTIBOUND_SET, SYNTHETIC_MULTIBOUND_MAP));
-
-    /**
-     * {@link #SYNTHETIC_MULTIBOUND_SET} or {@link #SYNTHETIC_MULTIBOUND_MAP}, depending on the
-     * request's key.
-     */
-    static Kind forMultibindingRequest(DependencyRequest request) {
-      Key key = request.key();
+    static Kind forMultibindingKey(Key key) {
       if (SetType.isSet(key)) {
         return SYNTHETIC_MULTIBOUND_SET;
       } else if (MapType.isMap(key)) {
         return SYNTHETIC_MULTIBOUND_MAP;
       } else {
-        throw new IllegalArgumentException(
-            String.format("request is not for a set or map: %s", request));
+        throw new IllegalArgumentException(String.format("key is not for a set or map: %s", key));
       }
     }
   }
@@ -201,11 +174,23 @@ abstract class ContributionBinding extends Binding implements HasContributionTyp
   protected abstract Kind bindingKind();
 
   /**
+   * {@code true} if {@link #contributingModule()} is present and this is a nonabstract instance
+   * method.
+   */
+  boolean requiresModuleInstance() {
+    if (!bindingElement().isPresent() || !contributingModule().isPresent()) {
+      return false;
+    }
+    Set<Modifier> modifiers = bindingElement().get().getModifiers();
+    return !modifiers.contains(ABSTRACT) && !modifiers.contains(STATIC);
+  }
+
+  /**
    * The strategy for getting an instance of a factory for a {@link ContributionBinding}.
    */
   enum FactoryCreationStrategy {
-    /** The factory class is an enum with one value named {@code INSTANCE}. */
-    ENUM_INSTANCE,
+    /** The factory class is a single instance. */
+    SINGLETON_INSTANCE,
     /** The factory must be created by calling the constructor. */
     CLASS_CONSTRUCTOR,
     /** The factory is simply delegated to another. */
@@ -213,26 +198,29 @@ abstract class ContributionBinding extends Binding implements HasContributionTyp
   }
 
   /**
-   * Returns {@link FactoryCreationStrategy#ENUM_INSTANCE} if the binding has no dependencies and
-   * is a static provision binding or an {@link Inject @Inject} constructor binding. Otherwise
-   * returns {@link FactoryCreationStrategy#CLASS_CONSTRUCTOR}.
+   * Returns the {@link FactoryCreationStrategy} appropriate for a binding.
+   *
+   * <p>Delegate bindings use the {@link FactoryCreationStrategy#DELEGATE} strategy.
+   *
+   * <p>Bindings without dependencies that don't require a module instance use the {@link
+   * FactoryCreationStrategy#SINGLETON_INSTANCE} strategy.
+   *
+   * <p>All other bindings use the {@link FactoryCreationStrategy#CLASS_CONSTRUCTOR} strategy.
    */
   FactoryCreationStrategy factoryCreationStrategy() {
     switch (bindingKind()) {
       case SYNTHETIC_DELEGATE_BINDING:
-        return FactoryCreationStrategy.DELEGATE;
+        return DELEGATE;
       case PROVISION:
-        return implicitDependencies().isEmpty() && bindingElement().getModifiers().contains(STATIC)
-            ? FactoryCreationStrategy.ENUM_INSTANCE
-            : FactoryCreationStrategy.CLASS_CONSTRUCTOR;
+        return dependencies().isEmpty() && !requiresModuleInstance()
+            ? SINGLETON_INSTANCE
+            : CLASS_CONSTRUCTOR;
       case INJECTION:
       case SYNTHETIC_MULTIBOUND_SET:
       case SYNTHETIC_MULTIBOUND_MAP:
-        return implicitDependencies().isEmpty()
-            ? FactoryCreationStrategy.ENUM_INSTANCE
-            : FactoryCreationStrategy.CLASS_CONSTRUCTOR;
+        return dependencies().isEmpty() ? SINGLETON_INSTANCE : CLASS_CONSTRUCTOR;
       default:
-        return FactoryCreationStrategy.CLASS_CONSTRUCTOR;
+        return CLASS_CONSTRUCTOR;
     }
   }
 
@@ -241,10 +229,10 @@ abstract class ContributionBinding extends Binding implements HasContributionTyp
    * for this binding. Uses the binding's key, V in the came of {@code Map<K, FrameworkClass<V>>>},
    * and E {@code Set<E>} for {@link dagger.multibindings.IntoSet @IntoSet} methods.
    */
-  final TypeMirror factoryType() {
+  final TypeMirror contributedType() {
     switch (contributionType()) {
       case MAP:
-        return MapType.from(key()).unwrappedValueType(frameworkClass());
+        return MapType.from(key()).unwrappedValueType(bindingType().frameworkClass());
       case SET:
         return SetType.from(key()).elementType();
       case SET_VALUES:
@@ -265,13 +253,9 @@ abstract class ContributionBinding extends Binding implements HasContributionTyp
     return ImmutableSetMultimap.copyOf(
         Multimaps.index(
             mapBindings,
-            new Function<ContributionBinding, Object>() {
-              @Override
-              public Object apply(ContributionBinding mapBinding) {
-                AnnotationMirror mapKey = mapBinding.mapKey().get();
-                Optional<? extends AnnotationValue> unwrappedValue = unwrapValue(mapKey);
-                return unwrappedValue.isPresent() ? unwrappedValue.get().getValue() : mapKey;
-              }
+            mapBinding -> {
+              AnnotationMirror mapKey = mapBinding.mapKey().get();
+              return unwrapValue(mapKey).map(AnnotationValue::getValue).orElse(mapKey);
             }));
   }
 
@@ -283,12 +267,32 @@ abstract class ContributionBinding extends Binding implements HasContributionTyp
     return ImmutableSetMultimap.copyOf(
         Multimaps.index(
             mapBindings,
-            new Function<ContributionBinding, Equivalence.Wrapper<DeclaredType>>() {
-              @Override
-              public Equivalence.Wrapper<DeclaredType> apply(ContributionBinding mapBinding) {
-                return MoreTypes.equivalence()
-                    .wrap(mapBinding.mapKey().get().getAnnotationType());
-              }
-            }));
+            mapBinding ->
+                MoreTypes.equivalence().wrap(mapBinding.mapKey().get().getAnnotationType())));
+  }
+
+  /**
+   * Base builder for {@link com.google.auto.value.AutoValue @AutoValue} subclasses of
+   * {@link ContributionBinding}.
+   */
+  @CanIgnoreReturnValue
+  abstract static class Builder<B extends Builder<B>> {
+    abstract B contributionType(ContributionType contributionType);
+
+    abstract B bindingElement(Element bindingElement);
+
+    abstract B contributingModule(TypeElement contributingModule);
+
+    abstract B key(Key key);
+
+    abstract B explicitDependencies(Iterable<DependencyRequest> dependencies);
+
+    abstract B explicitDependencies(DependencyRequest... dependencies);
+
+    abstract B nullableType(Optional<DeclaredType> nullableType);
+
+    abstract B wrappedMapKey(Optional<Equivalence.Wrapper<AnnotationMirror>> wrappedMapKey);
+
+    abstract B bindingKind(ContributionBinding.Kind kind);
   }
 }

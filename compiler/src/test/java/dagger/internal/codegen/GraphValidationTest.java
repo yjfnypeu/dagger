@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Google, Inc.
+ * Copyright (C) 2014 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.internal.codegen;
+
+import static com.google.common.truth.Truth.assertAbout;
+import static com.google.testing.compile.JavaSourceSubjectFactory.javaSource;
+import static com.google.testing.compile.JavaSourcesSubject.assertThat;
+import static com.google.testing.compile.JavaSourcesSubjectFactory.javaSources;
+import static dagger.internal.codegen.ErrorMessages.nullableToNonNullable;
 
 import com.google.common.base.Joiner;
 import com.google.common.collect.ImmutableList;
@@ -24,16 +31,14 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
-import static com.google.common.truth.Truth.assertAbout;
-import static com.google.testing.compile.JavaSourceSubjectFactory.javaSource;
-import static com.google.testing.compile.JavaSourcesSubjectFactory.javaSources;
-import static dagger.internal.codegen.ErrorMessages.nullableToNonNullable;
-
 @RunWith(JUnit4.class)
 public class GraphValidationTest {
   private static final JavaFileObject NULLABLE =
       JavaFileObjects.forSourceLines(
-          "test.Nullable", "package test;", "public @interface Nullable {}");
+          "test.Nullable", // force one-string-per-line format
+          "package test;",
+          "",
+          "public @interface Nullable {}");
 
   @Test public void componentOnConcreteClass() {
     JavaFileObject component = JavaFileObjects.forSourceLines("test.MyComponent",
@@ -202,6 +207,38 @@ public class GraphValidationTest {
         .onLine(7);
   }
 
+  @Test
+  public void invalidMembersInjection() {
+    JavaFileObject injected =
+        JavaFileObjects.forSourceLines(
+            "test.Injected",
+            "package test;",
+            "",
+            "import javax.inject.Inject;",
+            "",
+            "final class Injected {",
+            "  @Inject static Object object;",
+            "}");
+    JavaFileObject component =
+        JavaFileObjects.forSourceLines(
+            "test.TestComponent",
+            "package test;",
+            "",
+            "import dagger.Component;",
+            "",
+            "@Component",
+            "interface TestComponent {",
+            "  void inject(Injected injected);",
+            "}");
+    assertAbout(javaSources())
+        .that(ImmutableList.of(injected, component))
+        .processedWith(new ComponentProcessor())
+        .failsToCompile()
+        .withErrorContaining("static fields")
+        .in(injected)
+        .onLine(6);
+  }
+
   @Test public void cyclicDependency() {
     JavaFileObject component = JavaFileObjects.forSourceLines("test.Outer",
         "package test;",
@@ -233,7 +270,7 @@ public class GraphValidationTest {
     String expectedError =
         Joiner.on('\n')
             .join(
-                "test.Outer.CComponent.getC() contains a dependency cycle:",
+                "Found a dependency cycle:",
                 "      test.Outer.C is injected at",
                 "          test.Outer.A.<init>(cParam)",
                 "      test.Outer.A is injected at",
@@ -286,7 +323,7 @@ public class GraphValidationTest {
     String expectedError =
         Joiner.on('\n')
             .join(
-                "test.Outer.DComponent.getD() contains a dependency cycle:",
+                "Found a dependency cycle:",
                 "      test.Outer.C is injected at",
                 "          test.Outer.A.<init>(cParam)",
                 "      test.Outer.A is injected at",
@@ -358,7 +395,7 @@ public class GraphValidationTest {
     String expectedError =
         Joiner.on('\n')
             .join(
-                "test.Outer.CComponent.getC() contains a dependency cycle:",
+                "Found a dependency cycle:",
                 "      test.Outer.C is injected at",
                 "          test.Outer.CModule.c(c)",
                 "      java.util.Map<java.lang.String,test.Outer.C> is injected at",
@@ -423,7 +460,7 @@ public class GraphValidationTest {
     String expectedError =
         Joiner.on('\n')
             .join(
-                "test.Outer.CComponent.getC() contains a dependency cycle:",
+                "Found a dependency cycle:",
                 "      test.Outer.C is injected at",
                 "          test.Outer.CModule.c(c)",
                 "      java.util.Set<test.Outer.C> is injected at",
@@ -483,7 +520,7 @@ public class GraphValidationTest {
     String expectedError =
         Joiner.on('\n')
             .join(
-                "test.Outer.DComponent.getD() contains a dependency cycle:",
+                "Found a dependency cycle:",
                 "      test.Outer.C is injected at",
                 "          test.Outer.A.<init>(cParam)",
                 "      test.Outer.A is injected at",
@@ -502,6 +539,193 @@ public class GraphValidationTest {
         .withErrorContaining(expectedError)
         .in(component)
         .onLine(28);
+  }
+
+  @Test
+  public void cyclicDependencyInSubcomponents() {
+    JavaFileObject parent =
+        JavaFileObjects.forSourceLines(
+            "test.Parent",
+            "package test;",
+            "",
+            "import dagger.Component;",
+            "",
+            "@Component",
+            "interface Parent {",
+            "  Child child();",
+            "}");
+    JavaFileObject child =
+        JavaFileObjects.forSourceLines(
+            "test.Child",
+            "package test;",
+            "",
+            "import dagger.Subcomponent;",
+            "",
+            "@Subcomponent(modules = ChildModule.class)",
+            "interface Child {",
+            "  Grandchild grandchild();",
+            "}");
+    JavaFileObject grandchild =
+        JavaFileObjects.forSourceLines(
+            "test.Grandchild",
+            "package test;",
+            "",
+            "import dagger.Subcomponent;",
+            "",
+            "@Subcomponent(modules = GrandchildModule.class)",
+            "interface Grandchild {",
+            "  String entry();",
+            "}");
+    JavaFileObject childModule =
+        JavaFileObjects.forSourceLines(
+            "test.ChildModule",
+            "package test;",
+            "",
+            "import dagger.Module;",
+            "import dagger.Provides;",
+            "",
+            "@Module",
+            "abstract class ChildModule {",
+            "  @Provides static Object object(String string) {",
+            "    return string;",
+            "  }",
+            "}");
+    JavaFileObject grandchildModule =
+        JavaFileObjects.forSourceLines(
+            "test.GrandchildModule",
+            "package test;",
+            "",
+            "import dagger.Module;",
+            "import dagger.Provides;",
+            "",
+            "@Module",
+            "abstract class GrandchildModule {",
+            "  @Provides static String string(Object object) {",
+            "    return object.toString();",
+            "  }",
+            "}");
+
+    String expectedError =
+        Joiner.on('\n')
+            .join(
+                "[test.Grandchild.entry()] Found a dependency cycle:",
+                "      java.lang.String is injected at",
+                "          test.ChildModule.object(string)",
+                "      java.lang.Object is injected at",
+                "          test.GrandchildModule.string(object)",
+                "      java.lang.String is provided at",
+                "          test.Grandchild.entry()");
+
+    assertAbout(javaSources())
+        .that(ImmutableList.of(parent, child, grandchild, childModule, grandchildModule))
+        .processedWith(new ComponentProcessor())
+        .failsToCompile()
+        .withErrorContaining(expectedError)
+        .in(child)
+        .onLine(6);
+  }
+
+  @Test
+  public void circularBindsMethods() {
+    JavaFileObject qualifier =
+        JavaFileObjects.forSourceLines(
+            "test.SomeQualifier",
+            "package test;",
+            "",
+            "import javax.inject.Qualifier;",
+            "",
+            "@Qualifier @interface SomeQualifier {}");
+    JavaFileObject module =
+        JavaFileObjects.forSourceLines(
+            "test.TestModule",
+            "package test;",
+            "",
+            "import dagger.Binds;",
+            "import dagger.Module;",
+            "",
+            "@Module",
+            "abstract class TestModule {",
+            "  @Binds abstract Object bindUnqualified(@SomeQualifier Object qualified);",
+            "  @Binds @SomeQualifier abstract Object bindQualified(Object unqualified);",
+            "}");
+    JavaFileObject component =
+        JavaFileObjects.forSourceLines(
+            "test.TestComponent",
+            "package test;",
+            "",
+            "import dagger.Component;",
+            "",
+            "@Component(modules = TestModule.class)",
+            "interface TestComponent {",
+            "  Object unqualified();",
+            "  @SomeQualifier Object qualified();",
+            "}");
+
+    assertThat(qualifier, module, component)
+        .processedWith(new ComponentProcessor())
+        .failsToCompile()
+        .withErrorContaining(
+            "Found a dependency cycle:\n"
+                + "      java.lang.Object is injected at\n"
+                + "          test.TestModule.bindQualified(unqualified)\n"
+                + "      @test.SomeQualifier java.lang.Object is injected at\n"
+                + "          test.TestModule.bindUnqualified(qualified)\n"
+                + "      java.lang.Object is provided at\n"
+                + "          test.TestComponent.unqualified()")
+        .in(component)
+        .onLine(7)
+        .and()
+        .withErrorContaining(
+            "Found a dependency cycle:\n"
+                + "      @test.SomeQualifier java.lang.Object is injected at\n"
+                + "          test.TestModule.bindUnqualified(qualified)\n"
+                + "      java.lang.Object is injected at\n"
+                + "          test.TestModule.bindQualified(unqualified)\n"
+                + "      @test.SomeQualifier java.lang.Object is provided at\n"
+                + "          test.TestComponent.qualified()")
+        .in(component)
+        .onLine(8);
+  }
+
+  @Test
+  public void selfReferentialBinds() {
+    JavaFileObject module =
+        JavaFileObjects.forSourceLines(
+            "test.TestModule",
+            "package test;",
+            "",
+            "import dagger.Binds;",
+            "import dagger.Module;",
+            "",
+            "@Module",
+            "abstract class TestModule {",
+            "  @Binds abstract Object bindToSelf(Object sameKey);",
+            "}");
+    JavaFileObject component =
+        JavaFileObjects.forSourceLines(
+            "test.TestComponent",
+            "package test;",
+            "",
+            "import dagger.Component;",
+            "",
+            "@Component(modules = TestModule.class)",
+            "interface TestComponent {",
+            "  Object selfReferential();",
+            "}");
+
+    assertThat(module, component)
+        .processedWith(new ComponentProcessor())
+        .failsToCompile()
+        .withErrorContaining(
+            // TODO(gak): cl/126230644 produces a better error message in this case. Here it isn't
+            // unclear what is going wrong.
+            "Found a dependency cycle:\n"
+                + "      java.lang.Object is injected at\n"
+                + "          test.TestModule.bindToSelf(sameKey)\n"
+                + "      java.lang.Object is provided at\n"
+                + "          test.TestComponent.selfReferential()")
+        .in(component)
+        .onLine(7);
   }
 
   @Test public void duplicateExplicitBindings_ProvidesAndComponentProvision() {
@@ -587,7 +811,57 @@ public class GraphValidationTest {
         .failsToCompile()
         .withErrorContaining(expectedError).in(component).onLine(24);
   }
-  
+
+  @Test
+  public void duplicateExplicitBindings_ProvidesVsBinds() {
+    JavaFileObject component =
+        JavaFileObjects.forSourceLines(
+            "test.Outer",
+            "package test;",
+            "",
+            "import dagger.Binds;",
+            "import dagger.Component;",
+            "import dagger.Module;",
+            "import dagger.Provides;",
+            "import javax.inject.Inject;",
+            "",
+            "final class Outer {",
+            "  interface A {}",
+            "",
+            "  static final class B implements A {",
+            "    @Inject B() {}",
+            "  }",
+            "",
+            "  @Module",
+            "  static class Module1 {",
+            "    @Provides A provideA1() { return new A() {}; }",
+            "  }",
+            "",
+            "  @Module",
+            "  static abstract class Module2 {",
+            "    @Binds abstract A bindA2(B b);",
+            "  }",
+            "",
+            "  @Component(modules = { Module1.class, Module2.class})",
+            "  interface TestComponent {",
+            "    A getA();",
+            "  }",
+            "}");
+
+    assertAbout(javaSource())
+        .that(component)
+        .processedWith(new ComponentProcessor())
+        .failsToCompile()
+        .withErrorContaining(
+            Joiner.on("\n      ")
+                .join(
+                    "test.Outer.A is bound multiple times:",
+                    "@Provides test.Outer.A test.Outer.Module1.provideA1()",
+                    "@Binds test.Outer.A test.Outer.Module2.bindA2(test.Outer.B)"))
+        .in(component)
+        .onLine(28);
+  }
+
   @Test public void duplicateExplicitBindings_MultipleProvisionTypes() {
     JavaFileObject component = JavaFileObjects.forSourceLines("test.Outer",
         "package test;",
@@ -689,6 +963,8 @@ public class GraphValidationTest {
             "test.Outer",
             "package test;",
             "",
+            "import static java.lang.annotation.RetentionPolicy.RUNTIME;",
+            "",
             "import dagger.Component;",
             "import dagger.Module;",
             "import dagger.Multibindings;",
@@ -697,8 +973,6 @@ public class GraphValidationTest {
             "import java.util.HashSet;",
             "import java.util.Map;",
             "import java.util.Set;",
-            "",
-            "import static java.lang.annotation.RetentionPolicy.RUNTIME;",
             "",
             "final class Outer {",
             "  @Module",
@@ -753,7 +1027,7 @@ public class GraphValidationTest {
         .in(component)
         .onLine(36);
   }
-  
+
   @Test public void duplicateBindings_TruncateAfterLimit() {
     JavaFileObject component = JavaFileObjects.forSourceLines("test.Outer",
         "package test;",
@@ -871,10 +1145,12 @@ public class GraphValidationTest {
             "package test;",
             "",
             "import dagger.Component;",
+            "import dagger.Lazy;",
             "import dagger.Module;",
             "import dagger.Provides;",
             "import javax.inject.Inject;",
             "import javax.inject.Named;",
+            "import javax.inject.Provider;",
             "",
             "final class TestClass {",
             "  interface A {}",
@@ -907,44 +1183,59 @@ public class GraphValidationTest {
             "  interface AComponent {",
             "    @Named(\"slim shady\") D getFoo();",
             "    C injectC(C c);",
+            "    Provider<C> cProvider();",
+            "    Lazy<C> lazyC();",
+            "    Provider<Lazy<C>> lazyCProvider();",
             "  }",
             "}");
     String errorText = "test.TestClass.A cannot be provided without an @Provides-annotated method.";
     String firstError =
-        Joiner.on('\n')
+        Joiner.on("\n      ")
             .join(
                 errorText,
-                "      test.TestClass.A is injected at",
-                "          test.TestClass.B.<init>(a)",
-                "      test.TestClass.B is injected at",
-                "          test.TestClass.C.b",
-                "      test.TestClass.C is injected at",
-                "          test.TestClass.DImpl.<init>(c, …)",
-                "      test.TestClass.DImpl is injected at",
-                "          test.TestClass.DModule.d(…, impl, …)",
-                "      @javax.inject.Named(\"slim shady\") test.TestClass.D is provided at",
-                "          test.TestClass.AComponent.getFoo()");
-    String secondError =
-        Joiner.on('\n')
+                "test.TestClass.A is injected at",
+                "    test.TestClass.B.<init>(a)",
+                "test.TestClass.B is injected at",
+                "    test.TestClass.C.b",
+                "test.TestClass.C is injected at",
+                "    test.TestClass.DImpl.<init>(c, …)",
+                "test.TestClass.DImpl is injected at",
+                "    test.TestClass.DModule.d(…, impl, …)",
+                "@javax.inject.Named(\"slim shady\") test.TestClass.D is provided at",
+                "    test.TestClass.AComponent.getFoo()");
+    String otherErrorFormat =
+        Joiner.on("\n      ")
             .join(
                 errorText,
-                "      test.TestClass.A is injected at",
-                "          test.TestClass.B.<init>(a)",
-                "      test.TestClass.B is injected at",
-                "          test.TestClass.C.b",
-                "      test.TestClass.C is injected at",
-                "          test.TestClass.AComponent.injectC(c)");
+                "test.TestClass.A is injected at",
+                "    test.TestClass.B.<init>(a)",
+                "test.TestClass.B is injected at",
+                "    test.TestClass.C.b",
+                "test.TestClass.C is %s at",
+                "    test.TestClass.AComponent.%s");
     assertAbout(javaSource())
         .that(component)
         .processedWith(new ComponentProcessor())
         .failsToCompile()
         .withErrorContaining(firstError)
         .in(component)
-        .onLine(38)
+        .onLine(40)
         .and()
-        .withErrorContaining(secondError)
+        .withErrorContaining(String.format(otherErrorFormat, "injected", "injectC(c)"))
         .in(component)
-        .onLine(39);
+        .onLine(41)
+        .and()
+        .withErrorContaining(String.format(otherErrorFormat, "provided", "cProvider()"))
+        .in(component)
+        .onLine(42)
+        .and()
+        .withErrorContaining(String.format(otherErrorFormat, "provided", "lazyC()"))
+        .in(component)
+        .onLine(43)
+        .and()
+        .withErrorContaining(String.format(otherErrorFormat, "provided", "lazyCProvider()"))
+        .in(component)
+        .onLine(44);
   }
 
   @Test
@@ -995,6 +1286,89 @@ public class GraphValidationTest {
                     "    TestComponent.testInterface()"))
         .in(component)
         .onLine(5);
+  }
+
+  @Test
+  public void bindsMissingRightHandSide() {
+    JavaFileObject duplicates =
+        JavaFileObjects.forSourceLines(
+            "test.Duplicates",
+            "package test;",
+            "",
+            "import dagger.Binds;",
+            "import dagger.Component;",
+            "import dagger.Module;",
+            "import dagger.multibindings.IntKey;",
+            "import dagger.multibindings.IntoSet;",
+            "import dagger.multibindings.IntoMap;",
+            "import dagger.multibindings.LongKey;",
+            "import dagger.Provides;",
+            "import javax.inject.Inject;",
+            "",
+            "interface Duplicates {",
+            "",
+            "  interface BoundTwice {}",
+            "",
+            "  class BoundImpl implements BoundTwice {",
+            "    @Inject BoundImpl() {}",
+            "  }",
+            "",
+            "  class NotBound implements BoundTwice {}",
+            "",
+            "  @Module",
+            "  abstract class DuplicatesModule {",
+            "    @Binds abstract BoundTwice bindWithResolvedKey(BoundImpl impl);",
+            "    @Binds abstract BoundTwice bindWithUnresolvedKey(NotBound notBound);",
+            "",
+            "    @Binds abstract Object bindObject(NotBound notBound);",
+            "",
+            "    @Binds @IntoSet abstract BoundTwice bindWithUnresolvedKey_set(NotBound notBound);",
+            "",
+            "    @Binds @IntoMap @IntKey(1)",
+            "    abstract BoundTwice bindWithUnresolvedKey_intMap(NotBound notBound);",
+            "",
+            "    @Provides @IntoMap @LongKey(2L)",
+            "    static BoundTwice provideWithUnresolvedKey_longMap(BoundImpl impl) {",
+            "      return impl;",
+            "    }",
+            "    @Binds @IntoMap @LongKey(2L)",
+            "    abstract BoundTwice bindWithUnresolvedKey_longMap(NotBound notBound);",
+            "  }",
+            "}");
+    JavaFileObject component =
+        JavaFileObjects.forSourceLines(
+            "test.C",
+            "package test;",
+            "",
+            "import dagger.Component;",
+            "import java.util.Set;",
+            "import java.util.Map;",
+            "import test.Duplicates.BoundTwice;",
+            "",
+            "@Component(modules = Duplicates.DuplicatesModule.class)",
+            "interface C {",
+            "  BoundTwice boundTwice();",
+            "  Object object();",
+            "  Set<BoundTwice> set();",
+            "  Map<Integer, BoundTwice> intMap();",
+            "  Map<Long, BoundTwice> longMap();",
+            "}");
+
+    assertThat(duplicates, component)
+        .processedWith(new ComponentProcessor())
+        .failsToCompile()
+        .withErrorContaining("test.Duplicates.BoundTwice is bound multiple times:")
+            .in(component).onLine(10)
+        .and().withErrorContaining("test.Duplicates.DuplicatesModule.bindWithUnresolvedKey")
+            .in(component).onLine(10)
+        .and().withErrorContaining("test.Duplicates.NotBound cannot be provided")
+            .in(component).onLine(11)
+        .and().withErrorContaining("test.Duplicates.NotBound cannot be provided")
+            .in(component).onLine(12)
+        .and().withErrorContaining("test.Duplicates.NotBound cannot be provided")
+            .in(component).onLine(13)
+        .and().withErrorContaining("same map key is bound more than once")
+            .in(component).onLine(14);
   }
 
   @Test public void resolvedParametersInDependencyTrace() {
@@ -1272,6 +1646,190 @@ public class GraphValidationTest {
         .compilesWithoutError();
   }
 
+  @Test
+  public void nullCheckForOptionalInstance() {
+    JavaFileObject a =
+        JavaFileObjects.forSourceLines(
+            "test.A",
+            "package test;",
+            "",
+            "import com.google.common.base.Optional;",
+            "import javax.inject.Inject;",
+            "",
+            "final class A {",
+            "  @Inject A(Optional<String> optional) {}",
+            "}");
+    JavaFileObject module =
+        JavaFileObjects.forSourceLines(
+            "test.TestModule",
+            "package test;",
+            "",
+            "import dagger.BindsOptionalOf;",
+            "import dagger.Provides;",
+            "import javax.inject.Inject;",
+            "",
+            "@dagger.Module",
+            "abstract class TestModule {",
+            "  @Nullable @Provides static String provideString() { return null; }",
+            "  @BindsOptionalOf abstract String optionalString();",
+            "}");
+    JavaFileObject component =
+        JavaFileObjects.forSourceLines(
+            "test.TestComponent",
+            "package test;",
+            "",
+            "import dagger.Component;",
+            "",
+            "@Component(modules = TestModule.class)",
+            "interface TestComponent {",
+            "  A a();",
+            "}");
+    assertAbout(javaSources())
+        .that(ImmutableList.of(NULLABLE, a, module, component))
+        .processedWith(new ComponentProcessor())
+        .failsToCompile()
+        .withErrorContaining(
+            nullableToNonNullable(
+                "java.lang.String",
+                "@test.Nullable @Provides String test.TestModule.provideString()"));
+  }
+
+  @Test
+  public void nullCheckForOptionalProvider() {
+    JavaFileObject a =
+        JavaFileObjects.forSourceLines(
+            "test.A",
+            "package test;",
+            "",
+            "import com.google.common.base.Optional;",
+            "import javax.inject.Inject;",
+            "import javax.inject.Provider;",
+            "",
+            "final class A {",
+            "  @Inject A(Optional<Provider<String>> optional) {}",
+            "}");
+    JavaFileObject module =
+        JavaFileObjects.forSourceLines(
+            "test.TestModule",
+            "package test;",
+            "",
+            "import dagger.BindsOptionalOf;",
+            "import dagger.Provides;",
+            "import javax.inject.Inject;",
+            "",
+            "@dagger.Module",
+            "abstract class TestModule {",
+            "  @Nullable @Provides static String provideString() { return null; }",
+            "  @BindsOptionalOf abstract String optionalString();",
+            "}");
+    JavaFileObject component =
+        JavaFileObjects.forSourceLines(
+            "test.TestComponent",
+            "package test;",
+            "",
+            "import dagger.Component;",
+            "",
+            "@Component(modules = TestModule.class)",
+            "interface TestComponent {",
+            "  A a();",
+            "}");
+    assertAbout(javaSources())
+        .that(ImmutableList.of(NULLABLE, a, module, component))
+        .processedWith(new ComponentProcessor())
+        .compilesWithoutError();
+  }
+
+  @Test
+  public void nullCheckForOptionalLazy() {
+    JavaFileObject a =
+        JavaFileObjects.forSourceLines(
+            "test.A",
+            "package test;",
+            "",
+            "import com.google.common.base.Optional;",
+            "import dagger.Lazy;",
+            "import javax.inject.Inject;",
+            "",
+            "final class A {",
+            "  @Inject A(Optional<Lazy<String>> optional) {}",
+            "}");
+    JavaFileObject module =
+        JavaFileObjects.forSourceLines(
+            "test.TestModule",
+            "package test;",
+            "",
+            "import dagger.BindsOptionalOf;",
+            "import dagger.Provides;",
+            "import javax.inject.Inject;",
+            "",
+            "@dagger.Module",
+            "abstract class TestModule {",
+            "  @Nullable @Provides static String provideString() { return null; }",
+            "  @BindsOptionalOf abstract String optionalString();",
+            "}");
+    JavaFileObject component =
+        JavaFileObjects.forSourceLines(
+            "test.TestComponent",
+            "package test;",
+            "",
+            "import dagger.Component;",
+            "",
+            "@Component(modules = TestModule.class)",
+            "interface TestComponent {",
+            "  A a();",
+            "}");
+    assertAbout(javaSources())
+        .that(ImmutableList.of(NULLABLE, a, module, component))
+        .processedWith(new ComponentProcessor())
+        .compilesWithoutError();
+  }
+
+  @Test
+  public void nullCheckForOptionalProviderOfLazy() {
+    JavaFileObject a =
+        JavaFileObjects.forSourceLines(
+            "test.A",
+            "package test;",
+            "",
+            "import com.google.common.base.Optional;",
+            "import dagger.Lazy;",
+            "import javax.inject.Inject;",
+            "import javax.inject.Provider;",
+            "",
+            "final class A {",
+            "  @Inject A(Optional<Provider<Lazy<String>>> optional) {}",
+            "}");
+    JavaFileObject module =
+        JavaFileObjects.forSourceLines(
+            "test.TestModule",
+            "package test;",
+            "",
+            "import dagger.BindsOptionalOf;",
+            "import dagger.Provides;",
+            "import javax.inject.Inject;",
+            "",
+            "@dagger.Module",
+            "abstract class TestModule {",
+            "  @Nullable @Provides static String provideString() { return null; }",
+            "  @BindsOptionalOf abstract String optionalString();",
+            "}");
+    JavaFileObject component =
+        JavaFileObjects.forSourceLines(
+            "test.TestComponent",
+            "package test;",
+            "",
+            "import dagger.Component;",
+            "",
+            "@Component(modules = TestModule.class)",
+            "interface TestComponent {",
+            "  A a();",
+            "}");
+    assertAbout(javaSources())
+        .that(ImmutableList.of(NULLABLE, a, module, component))
+        .processedWith(new ComponentProcessor())
+        .compilesWithoutError();
+  }
+
   @Test public void componentDependencyMustNotCycle_Direct() {
     JavaFileObject shortLifetime = JavaFileObjects.forSourceLines("test.ComponentShort",
         "package test;",
@@ -1342,7 +1900,7 @@ public class GraphValidationTest {
         .and()
         .withErrorContaining(shortErrorMessage).in(shortLifetime);
   }
-  
+
   @Test
   public void subcomponentBindingConflictsWithParent() {
     JavaFileObject parentChildConflict =
@@ -1369,7 +1927,7 @@ public class GraphValidationTest {
             "import javax.inject.Qualifier;",
             "",
             "@Qualifier @interface ChildGrandchildConflict {}");
-    
+
     /* Some annotation processor implementations do not report more than one error per element. So
      * separate parents for testing parent-conflicts-with-child and
      * parent-conflicts-with-grandchild.
@@ -1572,7 +2130,7 @@ public class GraphValidationTest {
         .in(parentConflictsWithChild)
         .onLine(9);
   }
-  
+
   @Test
   public void bindingUsedOnlyInSubcomponentDependsOnBindingOnlyInSubcomponent() {
     JavaFileObject parent =
@@ -1626,7 +2184,7 @@ public class GraphValidationTest {
         .in(parent)
         .onLine(4);
   }
-  
+
   @Test
   public void multibindingContributionBetweenAncestorComponentAndEntrypointComponent() {
     JavaFileObject parent =
@@ -1699,5 +2257,278 @@ public class GraphValidationTest {
         .withErrorContaining("[Grandchild.object()] java.lang.Double cannot be provided")
         .in(parent)
         .onLine(4);
+  }
+
+  @Test
+  public void missingReleasableReferenceManager() {
+    JavaFileObject testScope =
+        JavaFileObjects.forSourceLines(
+            "test.TestScope",
+            "package test;",
+            "",
+            "import static java.lang.annotation.RetentionPolicy.RUNTIME;",
+            "",
+            "import dagger.releasablereferences.CanReleaseReferences;",
+            "import java.lang.annotation.Retention;",
+            "import javax.inject.Scope;",
+            "",
+            "@CanReleaseReferences",
+            "@BadMetadata",
+            "@Scope",
+            "@Retention(RUNTIME)",
+            "@interface TestScope {}");
+    JavaFileObject otherScope =
+        JavaFileObjects.forSourceLines(
+            "test.OtherScope",
+            "package test;",
+            "",
+            "import static java.lang.annotation.RetentionPolicy.RUNTIME;",
+            "",
+            "import dagger.releasablereferences.CanReleaseReferences;",
+            "import java.lang.annotation.Retention;",
+            "import javax.inject.Scope;",
+            "",
+            "@CanReleaseReferences",
+            "@Scope",
+            "@Retention(RUNTIME)",
+            "@interface OtherScope {}");
+    JavaFileObject yetAnotherScope =
+        JavaFileObjects.forSourceLines(
+            "test.YetAnotherScope",
+            "package test;",
+            "",
+            "import static java.lang.annotation.RetentionPolicy.RUNTIME;",
+            "",
+            "import dagger.releasablereferences.CanReleaseReferences;",
+            "import java.lang.annotation.Retention;",
+            "import javax.inject.Scope;",
+            "",
+            "@CanReleaseReferences",
+            "@Scope",
+            "@Retention(RUNTIME)",
+            "@interface YetAnotherScope {}");
+    JavaFileObject testMetadata =
+        JavaFileObjects.forSourceLines(
+            "test.TestMetadata",
+            "package test;",
+            "",
+            "import dagger.releasablereferences.CanReleaseReferences;",
+            "",
+            "@CanReleaseReferences",
+            "@interface TestMetadata {}");
+    JavaFileObject badMetadata =
+        JavaFileObjects.forSourceLines(
+            "test.BadMetadata", // force one-string-per-line format
+            "package test;",
+            "",
+            "@interface BadMetadata {}");
+    JavaFileObject component =
+        JavaFileObjects.forSourceLines(
+            "test.TestComponent",
+            "package test;",
+            "",
+            "import dagger.Component;",
+            "import dagger.releasablereferences.ForReleasableReferences;",
+            "import dagger.releasablereferences.ReleasableReferenceManager;",
+            "import dagger.releasablereferences.TypedReleasableReferenceManager;",
+            "",
+            "@TestScope",
+            "@YetAnotherScope",
+            "@Component",
+            "interface TestComponent {",
+            "  @ForReleasableReferences(OtherScope.class)",
+            "  ReleasableReferenceManager otherManager();",
+            "",
+            "  @ForReleasableReferences(TestScope.class)",
+            "  TypedReleasableReferenceManager<TestMetadata> typedManager();",
+            "",
+            "  @ForReleasableReferences(TestScope.class)",
+            "  TypedReleasableReferenceManager<BadMetadata> badManager();",
+            "}");
+    assertAbout(javaSources())
+        .that(
+            ImmutableList.of(
+                testScope, otherScope, yetAnotherScope, testMetadata, badMetadata, component))
+        .processedWith(new ComponentProcessor())
+        .failsToCompile()
+        .withErrorContaining(
+            "There is no binding for "
+                + "@dagger.releasablereferences.ForReleasableReferences(test.OtherScope.class) "
+                + "dagger.releasablereferences.ReleasableReferenceManager "
+                + "because no component in test.TestComponent's component hierarchy is annotated "
+                + "with @test.OtherScope. "
+                + "The available reference-releasing scopes are "
+                + "[@test.TestScope, @test.YetAnotherScope].")
+        .in(component)
+        .onLine(13)
+        .and()
+        .withErrorContaining(
+            "There is no binding for "
+                + "@dagger.releasablereferences.ForReleasableReferences(test.TestScope.class) "
+                + "dagger.releasablereferences.TypedReleasableReferenceManager<test.TestMetadata> "
+                + "because test.TestScope is not annotated with @test.TestMetadata")
+        .in(component)
+        .onLine(16)
+        .and()
+        .withErrorContaining(
+            "There is no binding for "
+                + "@dagger.releasablereferences.ForReleasableReferences(test.TestScope.class) "
+                + "dagger.releasablereferences.TypedReleasableReferenceManager<test.BadMetadata> "
+                + "because test.BadMetadata is not annotated with "
+                + "@dagger.releasablereferences.CanReleaseReferences")
+        .in(component)
+        .onLine(19);
+  }
+
+  @Test
+  public void releasableReferenceManagerConflict() {
+    JavaFileObject testScope =
+        JavaFileObjects.forSourceLines(
+            "test.TestScope",
+            "package test;",
+            "",
+            "import static java.lang.annotation.RetentionPolicy.RUNTIME;",
+            "",
+            "import dagger.releasablereferences.CanReleaseReferences;",
+            "import java.lang.annotation.Retention;",
+            "import javax.inject.Scope;",
+            "",
+            "@TestMetadata",
+            "@CanReleaseReferences",
+            "@Scope",
+            "@Retention(RUNTIME)",
+            "@interface TestScope {}");
+    JavaFileObject testMetadata =
+        JavaFileObjects.forSourceLines(
+            "test.TestMetadata",
+            "package test;",
+            "",
+            "import dagger.releasablereferences.CanReleaseReferences;",
+            "",
+            "@CanReleaseReferences",
+            "@interface TestMetadata {}");
+
+    JavaFileObject testModule =
+        JavaFileObjects.forSourceLines(
+            "test.TestModule",
+            "package test;",
+            "",
+            "import dagger.Module;",
+            "import dagger.Provides;",
+            "import dagger.releasablereferences.ForReleasableReferences;",
+            "import dagger.releasablereferences.ReleasableReferenceManager;",
+            "import dagger.releasablereferences.TypedReleasableReferenceManager;",
+            "import java.util.Set;",
+            "",
+            "@Module",
+            "abstract class TestModule {",
+            "  @Provides @ForReleasableReferences(TestScope.class)",
+            "  static ReleasableReferenceManager rrm() {",
+            "    return null;",
+            "  }",
+            "",
+            "  @Provides @ForReleasableReferences(TestScope.class)",
+            "  static TypedReleasableReferenceManager<TestMetadata> typedRrm() {",
+            "    return null;",
+            "  }",
+            "",
+            "  @Provides",
+            "  static Set<ReleasableReferenceManager> rrmSet() {",
+            "    return null;",
+            "  }",
+            "",
+            "  @Provides",
+            "  static Set<TypedReleasableReferenceManager<TestMetadata>> typedRrmSet() {",
+            "    return null;",
+            "  }",
+            "}");
+
+    JavaFileObject component =
+        JavaFileObjects.forSourceLines(
+            "test.TestComponent",
+            "package test;",
+            "",
+            "import dagger.Component;",
+            "import dagger.releasablereferences.ForReleasableReferences;",
+            "import dagger.releasablereferences.ReleasableReferenceManager;",
+            "import dagger.releasablereferences.TypedReleasableReferenceManager;",
+            "import java.util.Set;",
+            "",
+            "@TestScope",
+            "@Component(modules = TestModule.class)",
+            "interface TestComponent {",
+            "  @ForReleasableReferences(TestScope.class)",
+            "  ReleasableReferenceManager testManager();",
+            "",
+            "  @ForReleasableReferences(TestScope.class)",
+            "  TypedReleasableReferenceManager<TestMetadata> typedManager();",
+            "",
+            "  Set<ReleasableReferenceManager> managers();",
+            "  Set<TypedReleasableReferenceManager<TestMetadata>> typedManagers();",
+            "}");
+    assertAbout(javaSources())
+        .that(ImmutableList.of(testScope, testMetadata, testModule, component))
+        .processedWith(new ComponentProcessor())
+        .failsToCompile()
+        .withErrorContaining(
+            String.format(
+                error(
+                    "@%1$s.ForReleasableReferences(test.TestScope.class) "
+                        + "%1$s.ReleasableReferenceManager is bound multiple times:",
+                    "@Provides @%1$s.ForReleasableReferences(test.TestScope.class) "
+                        + "%1$s.ReleasableReferenceManager test.TestModule.rrm()",
+                    "binding for "
+                        + "@%1$s.ForReleasableReferences(value = test.TestScope.class) "
+                        + "%1$s.ReleasableReferenceManager from the scope declaration"),
+                "dagger.releasablereferences"))
+        .in(component)
+        .onLine(13)
+        .and()
+        .withErrorContaining(
+            String.format(
+                error(
+                    "@%1$s.ForReleasableReferences(test.TestScope.class) "
+                        + "%1$s.TypedReleasableReferenceManager<test.TestMetadata> "
+                        + "is bound multiple times:",
+                    "@Provides @%1$s.ForReleasableReferences(test.TestScope.class) "
+                        + "%1$s.TypedReleasableReferenceManager<test.TestMetadata> "
+                        + "test.TestModule.typedRrm()",
+                    "binding for "
+                        + "@%1$s.ForReleasableReferences(value = test.TestScope.class) "
+                        + "%1$s.TypedReleasableReferenceManager<test.TestMetadata> "
+                        + "from the scope declaration"),
+                "dagger.releasablereferences"))
+        .in(component)
+        .onLine(16)
+        .and()
+        .withErrorContaining(
+            error(
+                "java.util.Set<dagger.releasablereferences.ReleasableReferenceManager> "
+                    + "is bound multiple times:",
+                "@Provides "
+                    + "Set<dagger.releasablereferences.ReleasableReferenceManager> "
+                    + "test.TestModule.rrmSet()",
+                "Dagger-generated binding for "
+                    + "Set<dagger.releasablereferences.ReleasableReferenceManager>"))
+        .in(component)
+        .onLine(18)
+        .and()
+        .withErrorContaining(
+            String.format(
+                error(
+                    "java.util.Set<%1$s.TypedReleasableReferenceManager<test.TestMetadata>> "
+                        + "is bound multiple times:",
+                    "@Provides "
+                        + "Set<%1$s.TypedReleasableReferenceManager<test.TestMetadata>> "
+                        + "test.TestModule.typedRrmSet()",
+                    "Dagger-generated binding for "
+                        + "Set<%1$s.TypedReleasableReferenceManager<test.TestMetadata>>"),
+                "dagger.releasablereferences"))
+        .in(component)
+        .onLine(19);
+  }
+
+  private String error(String... lines) {
+    return Joiner.on("\n      ").join(lines);
   }
 }

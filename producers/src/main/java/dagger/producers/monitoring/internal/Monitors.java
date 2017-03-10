@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 Google Inc.
+ * Copyright (C) 2015 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.producers.monitoring.internal;
 
 import com.google.common.collect.ImmutableList;
@@ -133,6 +134,15 @@ public final class Monitors {
         delegate.requested();
       } catch (RuntimeException e) {
         logProducerMonitorMethodException(e, delegate, "requested");
+      }
+    }
+
+    @Override
+    public void ready() {
+      try {
+        delegate.ready();
+      } catch (RuntimeException e) {
+        logProducerMonitorMethodException(e, delegate, "ready");
       }
     }
 
@@ -258,6 +268,17 @@ public final class Monitors {
           delegate.requested();
         } catch (RuntimeException e) {
           logProducerMonitorMethodException(e, delegate, "requested");
+        }
+      }
+    }
+
+    @Override
+    public void ready() {
+      for (ProducerMonitor delegate : delegates) {
+        try {
+          delegate.ready();
+        } catch (RuntimeException e) {
+          logProducerMonitorMethodException(e, delegate, "ready");
         }
       }
     }

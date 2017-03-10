@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 Google, Inc.
+ * Copyright (C) 2015 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@
 
 package test.multipackage.a;
 
+import dagger.Binds;
 import dagger.Module;
 import dagger.Provides;
 import dagger.multibindings.ElementsIntoSet;
@@ -24,21 +25,18 @@ import dagger.multibindings.IntoSet;
 import dagger.multibindings.StringKey;
 import java.util.HashSet;
 import java.util.Set;
-import javax.inject.Inject;
 
 @Module
-public final class AModule {
+public abstract class AModule {
   @Provides
   @IntoSet
   static String provideString() {
     return "a";
   }
 
-  @Provides
+  @Binds
   @IntoSet
-  static Inaccessible provideInaccessible(Inaccessible inaccessible) {
-    return inaccessible;
-  }
+  abstract Inaccessible provideInaccessible(Inaccessible inaccessible);
 
   @Provides
   @ElementsIntoSet
@@ -46,15 +44,8 @@ public final class AModule {
     return new HashSet<>();
   }
 
-  @Provides
+  @Binds
   @IntoMap
   @StringKey("inaccessible")
-  static Inaccessible provideInaccessibleToMap(Inaccessible inaccessible) {
-    return inaccessible;
-  }
-
-  static class Inaccessible {
-    @Inject Inaccessible() {}
-  }
-
+  abstract Inaccessible provideInaccessibleToMap(Inaccessible inaccessible);
 }

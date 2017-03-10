@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 Google, Inc.
+ * Copyright (C) 2015 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,8 +13,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package test.subcomponent;
 
+import dagger.Binds;
 import dagger.Component;
 import dagger.Module;
 import dagger.Provides;
@@ -83,7 +85,7 @@ final class MultibindingSubcomponents {
   }
 
   @Module
-  static final class ParentMultibindingModule {
+  abstract static class ParentMultibindingModule {
 
     @Provides
     @IntoSet
@@ -113,13 +115,11 @@ final class MultibindingSubcomponents {
 
     /* This is not static because otherwise we have no tests that cover the case where a
      * subcomponent uses a module instance installed onto a parent component. */
-    @Provides
+    @Binds
     @IntoSet
-    static RequiresMultibindings<BoundInParentAndChild>
+    abstract RequiresMultibindings<BoundInParentAndChild>
         requiresMultibindingsInParentAndChildElement(
-            RequiresMultibindings<BoundInParentAndChild> requiresMultibindingsInParentAndChild) {
-      return requiresMultibindingsInParentAndChild;
-    }
+            RequiresMultibindings<BoundInParentAndChild> requiresMultibindingsInParentAndChild);
   }
 
   @Module
@@ -150,6 +150,37 @@ final class MultibindingSubcomponents {
     static BoundInChild onlyInChildEntry() {
       return BoundInChild.INSTANCE;
     }
+  }
+
+  @Module
+  abstract static class ChildMultibindingModuleWithOnlyBindsMultibindings {
+    @Provides
+    static BoundInParentAndChild provideBoundInParentAndChildForBinds() {
+      return BoundInParentAndChild.IN_CHILD;
+    }
+
+    @Binds
+    @IntoSet
+    abstract BoundInParentAndChild bindsLocalContribution(BoundInParentAndChild instance);
+
+    @Binds
+    @IntoMap
+    @StringKey("child key")
+    abstract BoundInParentAndChild inParentAndChildEntry(BoundInParentAndChild instance);
+
+    @Provides
+    static BoundInChild provideBoundInChildForBinds() {
+      return BoundInChild.INSTANCE;
+    }
+
+    @Binds
+    @IntoSet
+    abstract BoundInChild inChild(BoundInChild instance);
+
+    @Binds
+    @IntoMap
+    @StringKey("child key")
+    abstract BoundInChild inChildEntry(BoundInChild instance);
   }
 
   interface ProvidesBoundInParent {
@@ -211,4 +242,13 @@ final class MultibindingSubcomponents {
   interface Grandchild
       extends ProvidesBoundInParent, ProvidesBoundInParentAndChild, ProvidesBoundInChild,
           ProvidesSetOfRequiresMultibindings {}
+
+  @Component(modules = ParentMultibindingModule.class)
+  interface ParentWithProvisionHasChildWithBinds extends ParentWithProvision {
+    ChildWithBinds childWithBinds();
+  }
+
+  @Subcomponent(modules = ChildMultibindingModuleWithOnlyBindsMultibindings.class)
+  interface ChildWithBinds extends ChildWithProvision {}
+
 }

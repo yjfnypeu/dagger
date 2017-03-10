@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Google, Inc.
+ * Copyright (C) 2016 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,4 +21,5 @@
  * @see <a href="http://google.github.io/dagger/multibindings">Multibindings in the Dagger
  *      User's Guide</a>
  */
+
 package dagger.multibindings;

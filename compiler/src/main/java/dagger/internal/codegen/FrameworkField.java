@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Google, Inc.
+ * Copyright (C) 2014 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,14 +13,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.internal.codegen;
 
 import com.google.auto.value.AutoValue;
 import com.google.common.base.CaseFormat;
-import com.google.common.base.Optional;
 import com.squareup.javapoet.ClassName;
 import com.squareup.javapoet.ParameterizedTypeName;
 import com.squareup.javapoet.TypeName;
+import java.util.Optional;
 import javax.lang.model.element.Element;
 import javax.lang.model.element.ElementVisitor;
 import javax.lang.model.element.ExecutableElement;
@@ -68,7 +69,8 @@ abstract class FrameworkField {
    */
   static FrameworkField forResolvedBindings(
       ResolvedBindings resolvedBindings, Optional<ClassName> frameworkClass) {
-    return create(frameworkClass.or(ClassName.get(resolvedBindings.frameworkClass())),
+    return create(
+        frameworkClass.orElse(ClassName.get(resolvedBindings.frameworkClass())),
         TypeName.get(fieldValueType(resolvedBindings)),
         frameworkFieldName(resolvedBindings));
   }
@@ -91,8 +93,8 @@ abstract class FrameworkField {
   private static String frameworkFieldName(ResolvedBindings resolvedBindings) {
     if (resolvedBindings.bindingKey().kind().equals(BindingKey.Kind.CONTRIBUTION)) {
       ContributionBinding binding = resolvedBindings.contributionBinding();
-      if (!binding.isSyntheticBinding()) {
-        return BINDING_ELEMENT_NAME.visit(binding.bindingElement(), binding);
+      if (binding.bindingElement().isPresent()) {
+        return BINDING_ELEMENT_NAME.visit(binding.bindingElement().get(), binding);
       }
     }
     return BindingVariableNamer.name(resolvedBindings.binding());

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Google, Inc.
+ * Copyright (C) 2014 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,21 +13,24 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.internal.codegen;
+
+import static dagger.internal.codegen.ModuleProcessingStep.moduleProcessingStep;
+import static dagger.internal.codegen.ModuleProcessingStep.producerModuleProcessingStep;
 
 import com.google.auto.common.BasicAnnotationProcessor;
 import com.google.auto.service.AutoService;
 import com.google.common.collect.ImmutableList;
+import com.google.googlejavaformat.java.filer.FormattingFiler;
 import java.util.Set;
 import javax.annotation.processing.Filer;
 import javax.annotation.processing.Messager;
 import javax.annotation.processing.Processor;
+import javax.annotation.processing.RoundEnvironment;
 import javax.lang.model.SourceVersion;
 import javax.lang.model.util.Elements;
 import javax.lang.model.util.Types;
-
-import static dagger.internal.codegen.ModuleProcessingStep.moduleProcessingStep;
-import static dagger.internal.codegen.ModuleProcessingStep.producerModuleProcessingStep;
 
 /**
  * The annotation processor responsible for generating the classes that drive the Dagger 2.0
@@ -59,21 +62,51 @@ public final class ComponentProcessor extends BasicAnnotationProcessor {
     Messager messager = processingEnv.getMessager();
     Types types = processingEnv.getTypeUtils();
     Elements elements = processingEnv.getElementUtils();
-    Filer filer = processingEnv.getFiler();
-
     CompilerOptions compilerOptions = CompilerOptions.create(processingEnv, elements);
+    Filer filer =  new FormattingFiler(processingEnv.getFiler());
 
+    KeyFormatter keyFormatter = new KeyFormatter();
     MethodSignatureFormatter methodSignatureFormatter = new MethodSignatureFormatter(types);
     BindingDeclarationFormatter bindingDeclarationFormatter =
-        new BindingDeclarationFormatter(methodSignatureFormatter);
+        new BindingDeclarationFormatter(methodSignatureFormatter, keyFormatter);
     DependencyRequestFormatter dependencyRequestFormatter =
         new DependencyRequestFormatter(types, elements);
-    KeyFormatter keyFormatter = new KeyFormatter(methodSignatureFormatter);
+
+    Key.Factory keyFactory = new Key.Factory(types, elements);
 
     InjectValidator injectValidator = new InjectValidator(types, elements, compilerOptions);
     InjectValidator injectValidatorWhenGeneratingCode = injectValidator.whenGeneratingCode();
+    ProvidesMethodValidator providesMethodValidator = new ProvidesMethodValidator(elements, types);
+    ProducesMethodValidator producesMethodValidator = new ProducesMethodValidator(elements, types);
+    BindsMethodValidator bindsMethodValidator = new BindsMethodValidator(elements, types);
+    MultibindsMethodValidator multibindsMethodValidator =
+        new MultibindsMethodValidator(elements, types);
+    MultibindingsMethodValidator multibindingsMethodValidator =
+        new MultibindingsMethodValidator(elements, types);
+    BindsOptionalOfMethodValidator bindsOptionalOfMethodValidator =
+        new BindsOptionalOfMethodValidator(elements, types);
+    AnyBindingMethodValidator anyBindingMethodValidator =
+        new AnyBindingMethodValidator(
+            providesMethodValidator,
+            producesMethodValidator,
+            bindsMethodValidator,
+            multibindsMethodValidator,
+            bindsOptionalOfMethodValidator);
+    MultibindingsValidator multibindingsValidator =
+        new MultibindingsValidator(
+            elements,
+            types,
+            keyFactory,
+            keyFormatter,
+            methodSignatureFormatter,
+            multibindingsMethodValidator);
     ModuleValidator moduleValidator =
-        new ModuleValidator(types, elements, methodSignatureFormatter);
+        new ModuleValidator(
+            types,
+            elements,
+            anyBindingMethodValidator,
+            multibindingsValidator,
+            methodSignatureFormatter);
     BuilderValidator builderValidator = new BuilderValidator(elements, types);
     ComponentValidator subcomponentValidator =
         ComponentValidator.createForSubcomponent(
@@ -82,23 +115,6 @@ public final class ComponentProcessor extends BasicAnnotationProcessor {
         ComponentValidator.createForComponent(
             elements, types, moduleValidator, subcomponentValidator, builderValidator);
     MapKeyValidator mapKeyValidator = new MapKeyValidator();
-    ProvidesMethodValidator providesMethodValidator = new ProvidesMethodValidator(elements, types);
-    ProducesMethodValidator producesMethodValidator = new ProducesMethodValidator(elements, types);
-    BindsMethodValidator bindsMethodValidator = new BindsMethodValidator(elements, types);
-    MultibindsMethodValidator multibindsMethodValidator =
-        new MultibindsMethodValidator(elements, types);
-    MultibindingsMethodValidator multibindingsMethodValidator =
-        new MultibindingsMethodValidator(elements, types);
-
-    Key.Factory keyFactory = new Key.Factory(types, elements);
-
-    MultibindingsValidator multibindingsValidator =
-        new MultibindingsValidator(
-            elements,
-            keyFactory,
-            keyFormatter,
-            methodSignatureFormatter,
-            multibindingsMethodValidator);
 
     this.factoryGenerator =
         new FactoryGenerator(filer, elements, compilerOptions, injectValidatorWhenGeneratingCode);
@@ -114,19 +130,23 @@ public final class ComponentProcessor extends BasicAnnotationProcessor {
         new ProductionExecutorModuleGenerator(filer, elements);
 
     DependencyRequest.Factory dependencyRequestFactory =
-        new DependencyRequest.Factory(elements, keyFactory);
+        new DependencyRequest.Factory(keyFactory);
     ProvisionBinding.Factory provisionBindingFactory =
         new ProvisionBinding.Factory(elements, types, keyFactory, dependencyRequestFactory);
     ProductionBinding.Factory productionBindingFactory =
         new ProductionBinding.Factory(types, keyFactory, dependencyRequestFactory);
     MultibindingDeclaration.Factory multibindingDeclarationFactory =
         new MultibindingDeclaration.Factory(elements, types, keyFactory);
+    SubcomponentDeclaration.Factory subcomponentDeclarationFactory =
+        new SubcomponentDeclaration.Factory(keyFactory);
 
     MembersInjectionBinding.Factory membersInjectionBindingFactory =
         new MembersInjectionBinding.Factory(elements, types, keyFactory, dependencyRequestFactory);
 
     DelegateDeclaration.Factory bindingDelegateDeclarationFactory =
         new DelegateDeclaration.Factory(types, keyFactory, dependencyRequestFactory);
+    OptionalBindingDeclaration.Factory optionalBindingDeclarationFactory =
+        new OptionalBindingDeclaration.Factory(keyFactory);
 
     this.injectBindingRegistry =
         new InjectBindingRegistry(
@@ -136,7 +156,8 @@ public final class ComponentProcessor extends BasicAnnotationProcessor {
             injectValidator,
             keyFactory,
             provisionBindingFactory,
-            membersInjectionBindingFactory);
+            membersInjectionBindingFactory,
+            compilerOptions);
 
     ModuleDescriptor.Factory moduleDescriptorFactory =
         new ModuleDescriptor.Factory(
@@ -144,7 +165,9 @@ public final class ComponentProcessor extends BasicAnnotationProcessor {
             provisionBindingFactory,
             productionBindingFactory,
             multibindingDeclarationFactory,
-            bindingDelegateDeclarationFactory);
+            bindingDelegateDeclarationFactory,
+            subcomponentDeclarationFactory,
+            optionalBindingDeclarationFactory);
 
     ComponentDescriptor.Factory componentDescriptorFactory = new ComponentDescriptor.Factory(
         elements, types, dependencyRequestFactory, moduleDescriptorFactory);
@@ -157,8 +180,14 @@ public final class ComponentProcessor extends BasicAnnotationProcessor {
             provisionBindingFactory,
             productionBindingFactory);
 
-    MapKeyGenerator mapKeyGenerator = new MapKeyGenerator(filer, elements);
-    ComponentHierarchyValidator componentHierarchyValidator = new ComponentHierarchyValidator();
+    AnnotationCreatorGenerator annotationCreatorGenerator =
+        new AnnotationCreatorGenerator(filer, elements);
+    UnwrappedMapKeyGenerator unwrappedMapKeyGenerator =
+        new UnwrappedMapKeyGenerator(filer, elements);
+    CanReleaseReferencesValidator canReleaseReferencesValidator =
+        new CanReleaseReferencesValidator();
+    ComponentHierarchyValidator componentHierarchyValidator =
+        new ComponentHierarchyValidator(compilerOptions, elements);
     BindingGraphValidator bindingGraphValidator =
         new BindingGraphValidator(
             elements,
@@ -173,20 +202,17 @@ public final class ComponentProcessor extends BasicAnnotationProcessor {
             keyFactory);
 
     return ImmutableList.of(
-        new MapKeyProcessingStep(messager, types, mapKeyValidator, mapKeyGenerator),
+        new MapKeyProcessingStep(
+            messager, types, mapKeyValidator, annotationCreatorGenerator, unwrappedMapKeyGenerator),
+        new ForReleasableReferencesValidator(messager),
+        new CanReleaseReferencesProcessingStep(
+            messager, canReleaseReferencesValidator, annotationCreatorGenerator),
         new InjectProcessingStep(injectBindingRegistry),
         new MonitoringModuleProcessingStep(messager, monitoringModuleGenerator),
         new ProductionExecutorModuleProcessingStep(messager, productionExecutorModuleGenerator),
-        new MultibindingsProcessingStep(messager, multibindingsValidator),
         new MultibindingAnnotationsProcessingStep(messager),
-        moduleProcessingStep(
-            messager,
-            moduleValidator,
-            provisionBindingFactory,
-            factoryGenerator,
-            providesMethodValidator,
-            bindsMethodValidator,
-            multibindsMethodValidator),
+        new BindsInstanceProcessingStep(messager),
+        moduleProcessingStep(messager, moduleValidator, provisionBindingFactory, factoryGenerator),
         new ComponentProcessingStep(
             ComponentDescriptor.Kind.COMPONENT,
             messager,
@@ -201,11 +227,10 @@ public final class ComponentProcessor extends BasicAnnotationProcessor {
         producerModuleProcessingStep(
             messager,
             moduleValidator,
+            provisionBindingFactory,
+            factoryGenerator,
             productionBindingFactory,
-            producerFactoryGenerator,
-            producesMethodValidator,
-            bindsMethodValidator,
-            multibindsMethodValidator),
+            producerFactoryGenerator),
         new ComponentProcessingStep(
             ComponentDescriptor.Kind.PRODUCTION_COMPONENT,
             messager,
@@ -216,16 +241,20 @@ public final class ComponentProcessor extends BasicAnnotationProcessor {
             bindingGraphValidator,
             componentDescriptorFactory,
             bindingGraphFactory,
-            componentGenerator));
+            componentGenerator),
+        new MultibindingsProcessingStep(messager, multibindingsValidator),
+        new BindingMethodProcessingStep(messager, anyBindingMethodValidator));
   }
 
   @Override
-  protected void postProcess() {
-    try {
-      injectBindingRegistry.generateSourcesForRequiredBindings(
-          factoryGenerator, membersInjectorGenerator);
-    } catch (SourceFileGenerationException e) {
-      e.printMessageTo(processingEnv.getMessager());
+  protected void postRound(RoundEnvironment roundEnv) {
+    if (!roundEnv.processingOver()) {
+      try {
+        injectBindingRegistry.generateSourcesForRequiredBindings(
+            factoryGenerator, membersInjectorGenerator);
+      } catch (SourceFileGenerationException e) {
+        e.printMessageTo(processingEnv.getMessager());
+      }
     }
   }
 }

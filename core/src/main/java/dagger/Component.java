@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Google, Inc.
+ * Copyright (C) 2014 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger;
+
+import static java.lang.annotation.ElementType.TYPE;
+import static java.lang.annotation.RetentionPolicy.RUNTIME;
 
 import java.lang.annotation.Documented;
 import java.lang.annotation.Retention;
@@ -23,9 +27,6 @@ import javax.inject.Provider;
 import javax.inject.Qualifier;
 import javax.inject.Scope;
 import javax.inject.Singleton;
-
-import static java.lang.annotation.ElementType.TYPE;
-import static java.lang.annotation.RetentionPolicy.RUNTIME;
 
 /**
  * Annotates an interface or abstract class for which a fully-formed, dependency-injected
@@ -170,9 +171,13 @@ import static java.lang.annotation.RetentionPolicy.RUNTIME;
  * inherit the <em>entire</em> binding graph from its parent when it is declared. For that reason,
  * a subcomponent isn't evaluated for completeness until it is associated with a parent.
  *
- * <p>Subcomponents are declared via a factory method on a parent component or subcomponent. The
- * method may have any name, but must return the subcomponent. The factory method's parameters may
- * be any number of the subcomponent's modules, but must at least include those without visible
+ * <p>Subcomponents are declared by listing the class in the {@link Module#subcomponents()}
+ * attribute of one of the parent component's modules. This binds the {@link Subcomponent.Builder}
+ * within the parent component.
+ *
+ * <p>Subcomponents may also be declared via a factory method on a parent component or subcomponent.
+ * The method may have any name, but must return the subcomponent. The factory method's parameters
+ * may be any number of the subcomponent's modules, but must at least include those without visible
  * no-arg constructors. The following is an example of a factory method that creates a
  * request-scoped subcomponent from a singleton-scoped parent: <pre><code>
  *   {@literal @}Singleton {@literal @}Component

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Google, Inc.
+ * Copyright (C) 2014 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,11 +13,35 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.internal.codegen;
+
+import static com.google.common.base.Preconditions.checkState;
+import static com.google.common.collect.Iterables.getOnlyElement;
+import static com.squareup.javapoet.MethodSpec.constructorBuilder;
+import static com.squareup.javapoet.MethodSpec.methodBuilder;
+import static com.squareup.javapoet.TypeName.VOID;
+import static com.squareup.javapoet.TypeSpec.classBuilder;
+import static dagger.internal.codegen.Accessibility.isElementAccessibleFrom;
+import static dagger.internal.codegen.Accessibility.isTypeAccessibleFrom;
+import static dagger.internal.codegen.AnnotationSpecs.Suppression.RAWTYPES;
+import static dagger.internal.codegen.AnnotationSpecs.Suppression.UNCHECKED;
+import static dagger.internal.codegen.AnnotationSpecs.suppressWarnings;
+import static dagger.internal.codegen.CodeBlocks.makeParametersCodeBlock;
+import static dagger.internal.codegen.CodeBlocks.toParametersCodeBlock;
+import static dagger.internal.codegen.SourceFiles.bindingTypeElementTypeVariableNames;
+import static dagger.internal.codegen.SourceFiles.frameworkTypeUsageStatement;
+import static dagger.internal.codegen.SourceFiles.generateBindingFieldsForDependencies;
+import static dagger.internal.codegen.SourceFiles.membersInjectorNameForType;
+import static dagger.internal.codegen.SourceFiles.parameterizedGeneratedTypeNameForBinding;
+import static dagger.internal.codegen.TypeNames.membersInjectorOf;
+import static javax.lang.model.element.Modifier.FINAL;
+import static javax.lang.model.element.Modifier.PRIVATE;
+import static javax.lang.model.element.Modifier.PUBLIC;
+import static javax.lang.model.element.Modifier.STATIC;
 
 import com.google.auto.common.MoreElements;
 import com.google.common.base.CaseFormat;
-import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
@@ -37,35 +61,12 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map.Entry;
+import java.util.Optional;
 import java.util.Set;
 import javax.annotation.processing.Filer;
 import javax.inject.Provider;
 import javax.lang.model.element.Element;
-import javax.lang.model.element.Modifier;
-import javax.lang.model.type.ArrayType;
-import javax.lang.model.type.DeclaredType;
-import javax.lang.model.type.TypeVisitor;
 import javax.lang.model.util.Elements;
-import javax.lang.model.util.SimpleTypeVisitor7;
-
-import static com.google.auto.common.MoreElements.getPackage;
-import static com.google.common.base.Preconditions.checkState;
-import static com.google.common.collect.Iterables.getOnlyElement;
-import static com.squareup.javapoet.MethodSpec.constructorBuilder;
-import static com.squareup.javapoet.MethodSpec.methodBuilder;
-import static com.squareup.javapoet.TypeSpec.classBuilder;
-import static dagger.internal.codegen.AnnotationSpecs.SUPPRESS_WARNINGS_RAWTYPES;
-import static dagger.internal.codegen.AnnotationSpecs.SUPPRESS_WARNINGS_UNCHECKED;
-import static dagger.internal.codegen.CodeBlocks.makeParametersCodeBlock;
-import static dagger.internal.codegen.SourceFiles.bindingTypeElementTypeVariableNames;
-import static dagger.internal.codegen.SourceFiles.frameworkTypeUsageStatement;
-import static dagger.internal.codegen.SourceFiles.membersInjectorNameForType;
-import static dagger.internal.codegen.SourceFiles.parameterizedGeneratedTypeNameForBinding;
-import static dagger.internal.codegen.TypeNames.membersInjectorOf;
-import static javax.lang.model.element.Modifier.FINAL;
-import static javax.lang.model.element.Modifier.PRIVATE;
-import static javax.lang.model.element.Modifier.PUBLIC;
-import static javax.lang.model.element.Modifier.STATIC;
 
 /**
  * Generates {@link MembersInjector} implementations from {@link MembersInjectionBinding} instances.
@@ -95,13 +96,16 @@ final class MembersInjectorGenerator extends SourceFileGenerator<MembersInjectio
   Optional<TypeSpec.Builder> write(ClassName generatedTypeName, MembersInjectionBinding binding) {
     // Empty members injection bindings are special and don't need source files.
     if (binding.injectionSites().isEmpty()) {
-      return Optional.absent();
+      return Optional.empty();
     }
     if (!injectValidator.isValidType(binding.key().type())) {
-      return Optional.absent();
+      return Optional.empty();
     }
     // We don't want to write out resolved bindings -- we want to write out the generic version.
-    checkState(!binding.unresolved().isPresent());
+    checkState(
+        !binding.unresolved().isPresent(),
+        "tried to generate a MembersInjector for a binding of a resolved generic type: %s",
+        binding);
 
     ImmutableList<TypeVariableName> typeParameters = bindingTypeElementTypeVariableNames(binding);
     TypeSpec.Builder injectorTypeBuilder =
@@ -115,7 +119,7 @@ final class MembersInjectorGenerator extends SourceFileGenerator<MembersInjectio
 
     MethodSpec.Builder injectMembersBuilder =
         methodBuilder("injectMembers")
-            .returns(TypeName.VOID)
+            .returns(VOID)
             .addModifiers(PUBLIC)
             .addAnnotation(Override.class)
             .addParameter(injectedTypeName, "instance")
@@ -126,8 +130,7 @@ final class MembersInjectorGenerator extends SourceFileGenerator<MembersInjectio
                 "Cannot inject members into a null reference")
             .addCode("}");
 
-    ImmutableMap<BindingKey, FrameworkField> fields =
-        SourceFiles.generateBindingFieldsForDependencies(binding);
+    ImmutableMap<BindingKey, FrameworkField> fields = generateBindingFieldsForDependencies(binding);
 
     ImmutableMap.Builder<BindingKey, FieldSpec> dependencyFieldsBuilder = ImmutableMap.builder();
 
@@ -139,7 +142,7 @@ final class MembersInjectorGenerator extends SourceFileGenerator<MembersInjectio
     MethodSpec.Builder createMethodBuilder =
         methodBuilder("create")
             .returns(implementedType)
-            .addModifiers(Modifier.PUBLIC, Modifier.STATIC)
+            .addModifiers(PUBLIC, STATIC)
             .addTypeVariables(typeParameters);
 
     createMethodBuilder.addCode(
@@ -149,19 +152,16 @@ final class MembersInjectorGenerator extends SourceFileGenerator<MembersInjectio
     boolean usesRawFrameworkTypes = false;
     UniqueNameSet fieldNames = new UniqueNameSet();
     for (Entry<BindingKey, FrameworkField> fieldEntry : fields.entrySet()) {
-      BindingKey bindingKey = fieldEntry.getKey();
+      BindingKey dependencyBindingKey = fieldEntry.getKey();
       FrameworkField bindingField = fieldEntry.getValue();
 
       // If the dependency type is not visible to this members injector, then use the raw framework
       // type for the field.
       boolean useRawFrameworkType =
-          !VISIBLE_TO_MEMBERS_INJECTOR.visit(bindingKey.key().type(), binding);
+          !isTypeAccessibleFrom(dependencyBindingKey.key().type(), generatedTypeName.packageName());
 
       String fieldName = fieldNames.getUniqueName(bindingField.name());
-      TypeName fieldType =
-          useRawFrameworkType
-              ? bindingField.type().rawType
-              : bindingField.type();
+      TypeName fieldType = useRawFrameworkType ? bindingField.type().rawType : bindingField.type();
       FieldSpec.Builder fieldBuilder = FieldSpec.builder(fieldType, fieldName, PRIVATE, FINAL);
       ParameterSpec.Builder parameterBuilder = ParameterSpec.builder(fieldType, fieldName);
 
@@ -170,8 +170,8 @@ final class MembersInjectorGenerator extends SourceFileGenerator<MembersInjectio
       // parameters' raw-type warnings.
       if (useRawFrameworkType) {
         usesRawFrameworkTypes = true;
-        fieldBuilder.addAnnotation(SUPPRESS_WARNINGS_RAWTYPES);
-        parameterBuilder.addAnnotation(SUPPRESS_WARNINGS_RAWTYPES);
+        fieldBuilder.addAnnotation(suppressWarnings(RAWTYPES));
+        parameterBuilder.addAnnotation(suppressWarnings(RAWTYPES));
       }
       constructorBuilder.addParameter(parameterBuilder.build());
       createMethodBuilder.addParameter(parameterBuilder.build());
@@ -180,10 +180,12 @@ final class MembersInjectorGenerator extends SourceFileGenerator<MembersInjectio
       injectorTypeBuilder.addField(field);
       constructorBuilder.addStatement("assert $N != null", field);
       constructorBuilder.addStatement("this.$N = $N", field, field);
-      dependencyFieldsBuilder.put(bindingKey, field);
+      dependencyFieldsBuilder.put(dependencyBindingKey, field);
       constructorInvocationParameters.add(CodeBlock.of("$N", field));
     }
-    createMethodBuilder.addCode(CodeBlocks.join(constructorInvocationParameters.build(), ", "));
+
+    createMethodBuilder.addCode(
+        constructorInvocationParameters.build().stream().collect(toParametersCodeBlock()));
     createMethodBuilder.addCode(");");
 
     injectorTypeBuilder.addMethod(constructorBuilder.build());
@@ -194,7 +196,7 @@ final class MembersInjectorGenerator extends SourceFileGenerator<MembersInjectio
     List<MethodSpec> injectMethodsForSubclasses = new ArrayList<>();
     for (InjectionSite injectionSite : binding.injectionSites()) {
       injectMembersBuilder.addCode(
-          visibleToMembersInjector(binding, injectionSite.element())
+          isElementAccessibleFrom(injectionSite.element(), generatedTypeName.packageName())
               ? directInjectMemberCodeBlock(binding, dependencyFields, injectionSite)
               : delegateInjectMemberCodeBlock(dependencyFields, injectionSite));
       if (!injectionSite.element().getModifiers().contains(PUBLIC)
@@ -211,31 +213,16 @@ final class MembersInjectorGenerator extends SourceFileGenerator<MembersInjectio
     }
 
     if (usesRawFrameworkTypes) {
-      injectMembersBuilder.addAnnotation(SUPPRESS_WARNINGS_UNCHECKED);
+      injectMembersBuilder.addAnnotation(suppressWarnings(UNCHECKED));
     }
 
     injectorTypeBuilder.addMethod(injectMembersBuilder.build());
-    for (MethodSpec methodSpec : injectMethodsForSubclasses) {
-      injectorTypeBuilder.addMethod(methodSpec);
-    }
+    injectMethodsForSubclasses.forEach(injectorTypeBuilder::addMethod);
 
     return Optional.of(injectorTypeBuilder);
   }
 
-  /**
-   * Returns {@code true} if {@code element} is visible to the members injector for {@code binding}.
-   */
-  // TODO(dpb,gak): Make sure that all cases are covered here. E.g., what if element is public but
-  // enclosed in a package-private element?
-  private static boolean visibleToMembersInjector(
-      MembersInjectionBinding binding, Element element) {
-    return getPackage(element).equals(getPackage(binding.membersInjectedType()))
-        || element.getModifiers().contains(PUBLIC);
-  }
-
-  /**
-   * Returns a code block that directly injects the instance's field or method.
-   */
+  /** Returns a code block that directly injects the instance's field or method. */
   private CodeBlock directInjectMemberCodeBlock(
       MembersInjectionBinding binding,
       ImmutableMap<BindingKey, FieldSpec> dependencyFields,
@@ -302,7 +289,7 @@ final class MembersInjectorGenerator extends SourceFileGenerator<MembersInjectio
     return CodeBlock.of("(($T) instance)", injectionSiteName);
   }
 
-  private String injectionSiteDelegateMethodName(Element injectionSiteElement) {
+  private static String injectionSiteDelegateMethodName(Element injectionSiteElement) {
     return "inject"
         + CaseFormat.LOWER_CAMEL.to(
             CaseFormat.UPPER_CAMEL, injectionSiteElement.getSimpleName().toString());
@@ -356,7 +343,7 @@ final class MembersInjectorGenerator extends SourceFileGenerator<MembersInjectio
   private String staticInjectMethodDependencyParameterName(
       Set<String> parameterNames, DependencyRequest dependency, FieldSpec field) {
     StringBuilder parameterName =
-        new StringBuilder(dependency.requestElement().getSimpleName().toString());
+        new StringBuilder(dependency.requestElement().get().getSimpleName().toString());
     switch (dependency.kind()) {
       case LAZY:
       case INSTANCE:
@@ -377,17 +364,4 @@ final class MembersInjectorGenerator extends SourceFileGenerator<MembersInjectio
     }
     return parameterName.toString();
   }
-
-  private static final TypeVisitor<Boolean, MembersInjectionBinding> VISIBLE_TO_MEMBERS_INJECTOR =
-      new SimpleTypeVisitor7<Boolean, MembersInjectionBinding>(true) {
-        @Override
-        public Boolean visitArray(ArrayType t, MembersInjectionBinding p) {
-          return visit(t.getComponentType(), p);
-        }
-
-        @Override
-        public Boolean visitDeclared(DeclaredType t, MembersInjectionBinding p) {
-          return visibleToMembersInjector(p, t.asElement());
-        }
-      };
 }

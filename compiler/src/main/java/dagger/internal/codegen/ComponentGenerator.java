@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Google, Inc.
+ * Copyright (C) 2014 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,13 +13,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.internal.codegen;
 
 import com.google.common.base.Joiner;
-import com.google.common.base.Optional;
 import com.squareup.javapoet.ClassName;
 import com.squareup.javapoet.TypeSpec;
 import dagger.Component;
+import java.util.Optional;
 import javax.annotation.processing.Filer;
 import javax.lang.model.element.Element;
 import javax.lang.model.util.Elements;
@@ -52,8 +53,7 @@ final class ComponentGenerator extends SourceFileGenerator<BindingGraph> {
 
   @Override
   ClassName nameGeneratedType(BindingGraph input) {
-    ClassName componentDefinitionClassName =
-        ClassName.get(input.componentDescriptor().componentDefinitionType());
+    ClassName componentDefinitionClassName = ClassName.get(input.componentType());
     String componentName =
         "Dagger" + Joiner.on('_').join(componentDefinitionClassName.simpleNames());
     return componentDefinitionClassName.topLevelClassName().peerClass(componentName);
@@ -61,7 +61,7 @@ final class ComponentGenerator extends SourceFileGenerator<BindingGraph> {
 
   @Override
   Optional<? extends Element> getElementForErrorReporting(BindingGraph input) {
-    return Optional.of(input.componentDescriptor().componentDefinitionType());
+    return Optional.of(input.componentType());
   }
 
   @Override

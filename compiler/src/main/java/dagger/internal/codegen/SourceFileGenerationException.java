@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Google, Inc.
+ * Copyright (C) 2014 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,15 +13,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package dagger.internal.codegen;
 
-import com.google.common.base.Optional;
-import com.squareup.javapoet.ClassName;
-import javax.annotation.processing.Messager;
-import javax.lang.model.element.Element;
+package dagger.internal.codegen;
 
 import static com.google.common.base.Preconditions.checkNotNull;
 import static javax.tools.Diagnostic.Kind.ERROR;
+
+import com.squareup.javapoet.ClassName;
+import java.util.Optional;
+import javax.annotation.processing.Messager;
+import javax.lang.model.element.Element;
 
 /**
  * An exception thrown to indicate that a source file could not be generated.

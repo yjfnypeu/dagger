@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013 Square, Inc.
+ * Copyright (C) 2013 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package com.example.dagger.activitygraphs.ui;
+
+import static android.view.Gravity.CENTER;
 
 import android.os.Bundle;
 import android.support.v4.app.Fragment;
@@ -22,8 +25,6 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.TextView;
 import javax.inject.Inject;
-
-import static android.view.Gravity.CENTER;
 
 public class HomeFragment extends Fragment {
   @Inject ActivityTitleController titleController;

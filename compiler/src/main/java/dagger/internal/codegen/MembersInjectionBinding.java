@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Google, Inc.
+ * Copyright (C) 2014 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,15 +13,20 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.internal.codegen;
+
+import static com.google.auto.common.MoreElements.isAnnotationPresent;
+import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.common.base.Preconditions.checkState;
+import static dagger.internal.codegen.DaggerTypes.nonObjectSuperclass;
+import static javax.lang.model.element.Modifier.PRIVATE;
+import static javax.lang.model.element.Modifier.STATIC;
 
 import com.google.auto.common.MoreElements;
 import com.google.auto.common.MoreTypes;
 import com.google.auto.value.AutoValue;
-import com.google.common.base.Function;
-import com.google.common.base.Optional;
-import com.google.common.base.Predicate;
-import com.google.common.collect.ComparisonChain;
 import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSortedSet;
@@ -31,6 +36,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import javax.inject.Inject;
 import javax.lang.model.element.Element;
@@ -46,13 +52,6 @@ import javax.lang.model.util.ElementKindVisitor6;
 import javax.lang.model.util.Elements;
 import javax.lang.model.util.Types;
 
-import static com.google.auto.common.MoreElements.isAnnotationPresent;
-import static com.google.common.base.Preconditions.checkArgument;
-import static com.google.common.base.Preconditions.checkNotNull;
-import static com.google.common.base.Preconditions.checkState;
-import static javax.lang.model.element.Modifier.PRIVATE;
-import static javax.lang.model.element.Modifier.STATIC;
-
 /**
  * Represents the full members injection of a particular type.
  *
@@ -62,15 +61,18 @@ import static javax.lang.model.element.Modifier.STATIC;
 @AutoValue
 abstract class MembersInjectionBinding extends Binding {
   @Override
-  abstract Optional<MembersInjectionBinding> unresolved();
-
-  TypeElement membersInjectedType() {
-    return MoreElements.asType(bindingElement());
+  Optional<? extends Element> bindingElement() {
+    return Optional.of(membersInjectedType());
   }
 
+  abstract TypeElement membersInjectedType();
+
   @Override
-  Set<DependencyRequest> implicitDependencies() {
-    return dependencies();
+  abstract Optional<MembersInjectionBinding> unresolved();
+
+  @Override
+  Optional<TypeElement> contributingModule() {
+    return Optional.empty();
   }
 
   /** The set of individual sites where {@link Inject} is applied. */
@@ -82,15 +84,6 @@ abstract class MembersInjectionBinding extends Binding {
    */
   abstract Optional<Key> parentKey();
 
-  enum Strategy {
-    NO_OP,
-    INJECT_MEMBERS,
-  }
-
-  Strategy injectionStrategy() {
-    return injectionSites().isEmpty() ? Strategy.NO_OP : Strategy.INJECT_MEMBERS;
-  }
-
   @Override
   public BindingType bindingType() {
     return BindingType.MEMBERS_INJECTION;
@@ -100,14 +93,11 @@ abstract class MembersInjectionBinding extends Binding {
    * Returns {@code true} if any of this binding's injection sites are directly on the bound type.
    */
   boolean hasLocalInjectionSites() {
-    return FluentIterable.from(injectionSites())
+    return injectionSites()
+        .stream()
         .anyMatch(
-            new Predicate<InjectionSite>() {
-              @Override
-              public boolean apply(InjectionSite injectionSite) {
-                return injectionSite.element().getEnclosingElement().equals(membersInjectedType());
-              }
-            });
+            injectionSite ->
+                injectionSite.element().getEnclosingElement().equals(membersInjectedType()));
   }
 
   @AutoValue
@@ -123,7 +113,7 @@ abstract class MembersInjectionBinding extends Binding {
 
     abstract ImmutableSet<DependencyRequest> dependencies();
     
-    protected int indexAmongSiblingMembers(InjectionSite injectionSite) {
+    static int indexAmongSiblingMembers(InjectionSite injectionSite) {
       return injectionSite
           .element()
           .getEnclosingElement()
@@ -173,13 +163,13 @@ abstract class MembersInjectionBinding extends Binding {
     }
 
     /** Returns true if the type has some injected members in itself or any of its super classes. */
-    boolean hasInjectedMembers(DeclaredType declaredType) {
+    boolean hasInjectedMembersIn(DeclaredType declaredType) {
       return !getInjectionSites(declaredType).isEmpty();
     }
 
     /**
      * Returns a MembersInjectionBinding for the given type. If {@code resolvedType} is present,
-     * this will return a resolved binding, with the key & type resolved to the given type (using
+     * this will return a resolved binding, with the key and type resolved to the given type (using
      * {@link Types#asMemberOf(DeclaredType, Element)}).
      */
     MembersInjectionBinding forInjectedType(
@@ -198,37 +188,23 @@ abstract class MembersInjectionBinding extends Binding {
       ImmutableSortedSet<InjectionSite> injectionSites = getInjectionSites(declaredType);
       ImmutableSet<DependencyRequest> dependencies =
           FluentIterable.from(injectionSites)
-              .transformAndConcat(
-                  new Function<InjectionSite, Set<DependencyRequest>>() {
-                    @Override
-                    public Set<DependencyRequest> apply(InjectionSite input) {
-                      return input.dependencies();
-                    }
-                  })
+              .transformAndConcat(InjectionSite::dependencies)
               .toSet();
 
       Optional<Key> parentKey =
-          MoreTypes.nonObjectSuperclass(types, elements, declaredType)
-              .transform(
-                  new Function<DeclaredType, Key>() {
-                    @Override
-                    public Key apply(DeclaredType superclass) {
-                      return keyFactory.forMembersInjectedType(superclass);
-                    }
-                  });
+          nonObjectSuperclass(types, elements, declaredType)
+              .map(keyFactory::forMembersInjectedType);
 
       Key key = keyFactory.forMembersInjectedType(declaredType);
       TypeElement typeElement = MoreElements.asType(declaredType.asElement());
       return new AutoValue_MembersInjectionBinding(
-          typeElement,
-          Optional.<TypeElement>absent(),
           key,
           dependencies,
+          typeElement,
           hasNonDefaultTypeParameters(typeElement, key.type(), types)
               ? Optional.of(
-                  forInjectedType(
-                      MoreTypes.asDeclared(typeElement.asType()), Optional.<TypeMirror>absent()))
-              : Optional.<MembersInjectionBinding>absent(),
+                  forInjectedType(MoreTypes.asDeclared(typeElement.asType()), Optional.empty()))
+              : Optional.empty(),
           injectionSites,
           parentKey);
     }
@@ -239,7 +215,7 @@ abstract class MembersInjectionBinding extends Binding {
       SetMultimap<String, ExecutableElement> overriddenMethodMap = LinkedHashMultimap.create();
       for (Optional<DeclaredType> currentType = Optional.of(declaredType);
           currentType.isPresent();
-          currentType = MoreTypes.nonObjectSuperclass(types, elements, currentType.get())) {
+          currentType = nonObjectSuperclass(types, elements, currentType.get())) {
         final DeclaredType type = currentType.get();
         ancestors.add(MoreElements.asType(type.asElement()));
         for (Element enclosedElement : type.asElement().getEnclosedElements()) {
@@ -250,7 +226,7 @@ abstract class MembersInjectionBinding extends Binding {
             if (shouldBeInjected(injectionSite.element(), overriddenMethodMap)) {
               injectionSites.add(injectionSite);
             }
-            if (injectionSite.kind() == InjectionSite.Kind.METHOD) {
+            if (injectionSite.kind().equals(InjectionSite.Kind.METHOD)) {
               ExecutableElement injectionSiteMethod =
                   MoreElements.asExecutable(injectionSite.element());
               overriddenMethodMap.put(
@@ -260,23 +236,16 @@ abstract class MembersInjectionBinding extends Binding {
         }
       }
       return ImmutableSortedSet.copyOf(
-          new Comparator<InjectionSite>() {
-            @Override
-            public int compare(InjectionSite left, InjectionSite right) {
-              return ComparisonChain.start()
-                  // supertypes before subtypes
-                  .compare(
-                      ancestors.indexOf(right.element().getEnclosingElement()),
-                      ancestors.indexOf(left.element().getEnclosingElement()))
-                  // fields before methods
-                  .compare(left.element().getKind(), right.element().getKind())
-                  // then sort by whichever element comes first in the parent
-                  // this isn't necessary, but makes the processor nice and predictable
-                  .compare(
-                      left.indexAmongSiblingMembers(left), right.indexAmongSiblingMembers(right))
-                  .result();
-            }
-          },
+          // supertypes before subtypes
+          Comparator.comparing(
+                  (InjectionSite injectionSite) ->
+                      ancestors.indexOf(injectionSite.element().getEnclosingElement()))
+              .reversed()
+              // fields before methods
+              .thenComparing(injectionSite -> injectionSite.element().getKind())
+              // then sort by whichever element comes first in the parent
+              // this isn't necessary, but makes the processor nice and predictable
+              .thenComparing(InjectionSite::indexAmongSiblingMembers),
           injectionSites);
     }
 
@@ -308,8 +277,7 @@ abstract class MembersInjectionBinding extends Binding {
     }
 
     private final ElementVisitor<Optional<InjectionSite>, DeclaredType> injectionSiteVisitor =
-        new ElementKindVisitor6<Optional<InjectionSite>, DeclaredType>(
-            Optional.<InjectionSite>absent()) {
+        new ElementKindVisitor6<Optional<InjectionSite>, DeclaredType>(Optional.empty()) {
           @Override
           public Optional<InjectionSite> visitExecutableAsMethod(
               ExecutableElement e, DeclaredType type) {
@@ -323,7 +291,7 @@ abstract class MembersInjectionBinding extends Binding {
                     && !e.getModifiers().contains(PRIVATE)
                     && !e.getModifiers().contains(STATIC))
                 ? Optional.of(injectionSiteForInjectField(e, type))
-                : Optional.<InjectionSite>absent();
+                : Optional.empty();
           }
         };
   }

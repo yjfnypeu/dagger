@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Google, Inc.
+ * Copyright (C) 2014 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,13 +13,17 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.internal.codegen;
+
+import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.base.Preconditions.checkNotNull;
+import static com.google.common.base.Preconditions.checkState;
+import static dagger.internal.codegen.InjectionAnnotations.injectedConstructors;
+import static dagger.internal.codegen.SourceFiles.generatedClassNameForBinding;
 
 import com.google.auto.common.MoreElements;
 import com.google.auto.common.MoreTypes;
-import com.google.common.base.Optional;
-import com.google.common.base.Predicate;
-import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Maps;
@@ -31,6 +35,7 @@ import dagger.Provides;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import javax.annotation.processing.Messager;
 import javax.inject.Inject;
@@ -41,14 +46,6 @@ import javax.lang.model.type.TypeMirror;
 import javax.lang.model.util.Elements;
 import javax.lang.model.util.Types;
 import javax.tools.Diagnostic.Kind;
-
-import static com.google.auto.common.MoreElements.isAnnotationPresent;
-import static com.google.common.base.Preconditions.checkArgument;
-import static com.google.common.base.Preconditions.checkNotNull;
-import static com.google.common.base.Preconditions.checkState;
-import static dagger.internal.codegen.MembersInjectionBinding.Strategy.INJECT_MEMBERS;
-import static dagger.internal.codegen.SourceFiles.generatedClassNameForBinding;
-import static javax.lang.model.util.ElementFilter.constructorsIn;
 
 /**
  * Maintains the collection of provision bindings from {@link Inject} constructors and members
@@ -66,6 +63,7 @@ final class InjectBindingRegistry {
   private final Key.Factory keyFactory;
   private final ProvisionBinding.Factory provisionBindingFactory;
   private final MembersInjectionBinding.Factory membersInjectionBindingFactory;
+  private final CompilerOptions compilerOptions;
 
   final class BindingsCollection<B extends Binding> {
     private final BindingType bindingType;
@@ -108,7 +106,8 @@ final class InjectBindingRegistry {
     void tryToGenerateBinding(B binding, boolean warnIfNotAlreadyGenerated) {
       if (shouldGenerateBinding(binding, generatedClassNameForBinding(binding))) {
         bindingsRequiringGeneration.offer(binding);
-        if (warnIfNotAlreadyGenerated) {
+        if (compilerOptions.warnIfInjectionFactoryNotGeneratedUpstream()
+            && warnIfNotAlreadyGenerated) {
           messager.printMessage(
               Kind.NOTE,
               String.format(
@@ -133,7 +132,7 @@ final class InjectBindingRegistry {
       // We only cache resolved bindings or unresolved bindings w/o type arguments.
       // Unresolved bindings w/ type arguments aren't valid for the object graph.
       if (binding.unresolved().isPresent()
-          || binding.bindingTypeElement().getTypeParameters().isEmpty()) {
+          || binding.bindingTypeElement().get().getTypeParameters().isEmpty()) {
         Key key = binding.key();
         Binding previousValue = bindingsByKey.put(key, binding);
         checkState(previousValue == null || binding.equals(previousValue),
@@ -155,7 +154,8 @@ final class InjectBindingRegistry {
       InjectValidator injectValidator,
       Key.Factory keyFactory,
       ProvisionBinding.Factory provisionBindingFactory,
-      MembersInjectionBinding.Factory membersInjectionBindingFactory) {
+      MembersInjectionBinding.Factory membersInjectionBindingFactory,
+      CompilerOptions compilerOptions) {
     this.elements = elements;
     this.types = types;
     this.messager = messager;
@@ -163,6 +163,7 @@ final class InjectBindingRegistry {
     this.keyFactory = keyFactory;
     this.provisionBindingFactory = provisionBindingFactory;
     this.membersInjectionBindingFactory = membersInjectionBindingFactory;
+    this.compilerOptions = compilerOptions;
   }
 
   /**
@@ -215,7 +216,7 @@ final class InjectBindingRegistry {
 
   @CanIgnoreReturnValue
   Optional<ProvisionBinding> tryRegisterConstructor(ExecutableElement constructorElement) {
-    return tryRegisterConstructor(constructorElement, Optional.<TypeMirror>absent(), false);
+    return tryRegisterConstructor(constructorElement, Optional.empty(), false);
   }
 
   @CanIgnoreReturnValue
@@ -237,17 +238,17 @@ final class InjectBindingRegistry {
       ProvisionBinding binding =
           provisionBindingFactory.forInjectConstructor(constructorElement, resolvedType);
       registerBinding(binding, warnIfNotAlreadyGenerated);
-      if (membersInjectionBindingFactory.hasInjectedMembers(type)) {
+      if (membersInjectionBindingFactory.hasInjectedMembersIn(type)) {
         tryRegisterMembersInjectedType(typeElement, resolvedType, warnIfNotAlreadyGenerated);
       }
       return Optional.of(binding);
     }
-    return Optional.absent();
+    return Optional.empty();
   }
 
   @CanIgnoreReturnValue
   Optional<MembersInjectionBinding> tryRegisterMembersInjectedType(TypeElement typeElement) {
-    return tryRegisterMembersInjectedType(typeElement, Optional.<TypeMirror>absent(), false);
+    return tryRegisterMembersInjectedType(typeElement, Optional.empty(), false);
   }
 
   @CanIgnoreReturnValue
@@ -269,19 +270,19 @@ final class InjectBindingRegistry {
       MembersInjectionBinding binding =
           membersInjectionBindingFactory.forInjectedType(type, resolvedType);
       registerBinding(binding, warnIfNotAlreadyGenerated);
-      if (binding.parentKey().isPresent() && binding.injectionStrategy().equals(INJECT_MEMBERS)) {
+      if (binding.parentKey().isPresent() && !binding.injectionSites().isEmpty()) {
         getOrFindMembersInjectionBinding(binding.parentKey().get());
       }
       return Optional.of(binding);
     }
-    return Optional.absent();
+    return Optional.empty();
   }
 
   @CanIgnoreReturnValue
   Optional<ProvisionBinding> getOrFindProvisionBinding(Key key) {
     checkNotNull(key);
     if (!key.isValidImplicitProvisionKey(types)) {
-      return Optional.absent();
+      return Optional.empty();
     }
     ProvisionBinding binding = provisionBindings.getBinding(key);
     if (binding != null) {
@@ -294,7 +295,7 @@ final class InjectBindingRegistry {
     switch (injectConstructors.size()) {
       case 0:
         // No constructor found.
-        return Optional.absent();
+        return Optional.empty();
       case 1:
         return tryRegisterConstructor(
             Iterables.getOnlyElement(injectConstructors), Optional.of(key.type()), true);
@@ -302,18 +303,6 @@ final class InjectBindingRegistry {
         throw new IllegalStateException("Found multiple @Inject constructors: "
             + injectConstructors);
     }
-  }
-
-  private ImmutableSet<ExecutableElement> injectedConstructors(TypeElement element) {
-    return FluentIterable.from(constructorsIn(element.getEnclosedElements()))
-        .filter(
-            new Predicate<ExecutableElement>() {
-              @Override
-              public boolean apply(ExecutableElement constructor) {
-                return isAnnotationPresent(constructor, Inject.class);
-              }
-            })
-        .toSet();
   }
 
   /**

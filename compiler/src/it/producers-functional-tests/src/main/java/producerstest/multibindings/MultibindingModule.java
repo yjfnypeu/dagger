@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Google, Inc.
+ * Copyright (C) 2016 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package producerstest.multibindings;
 
 import com.google.common.collect.ImmutableSet;
@@ -22,10 +23,16 @@ import dagger.multibindings.ElementsIntoSet;
 import dagger.multibindings.IntKey;
 import dagger.multibindings.IntoMap;
 import dagger.multibindings.IntoSet;
+import dagger.multibindings.Multibinds;
+import dagger.multibindings.StringKey;
+import java.util.Map;
 import java.util.Set;
+import producerstest.multibindings.Qualifiers.EmptyButDeclaredInModule;
+import producerstest.multibindings.Qualifiers.EmptyButDeclaredInModuleAndProducerModule;
+import producerstest.multibindings.Qualifiers.OnlyProvisionMultibindings;
 
 @Module
-final class MultibindingModule {
+abstract class MultibindingModule {
   @Provides
   @IntoSet
   static String providedStr() {
@@ -43,5 +50,21 @@ final class MultibindingModule {
   @IntKey(3)
   static String providedValueFor3() {
     return "provided three";
+  }
+  
+  @Multibinds
+  @EmptyButDeclaredInModuleAndProducerModule
+  abstract Map<String, Object> emptyButDeclaredInModuleAndProducerModule();
+
+  @Multibinds
+  @EmptyButDeclaredInModule
+  abstract Map<String, Object> emptyButDeclaredInModule();
+
+  @Provides
+  @IntoMap
+  @StringKey("a")
+  @OnlyProvisionMultibindings
+  static Object onlyProvisionMultibindings() {
+    return "only multibinding";
   }
 }

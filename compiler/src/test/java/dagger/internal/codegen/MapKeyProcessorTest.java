@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Google, Inc.
+ * Copyright (C) 2014 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.internal.codegen;
+
+import static com.google.common.truth.Truth.assertAbout;
+import static com.google.testing.compile.JavaSourcesSubject.assertThat;
+import static com.google.testing.compile.JavaSourcesSubjectFactory.javaSources;
+import static dagger.internal.codegen.GeneratedLines.GENERATED_ANNOTATION;
 
 import com.google.auto.value.processor.AutoAnnotationProcessor;
 import com.google.common.collect.ImmutableList;
@@ -22,11 +28,6 @@ import javax.tools.JavaFileObject;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
-
-import static com.google.common.truth.Truth.assertAbout;
-import static com.google.testing.compile.JavaSourcesSubject.assertThat;
-import static com.google.testing.compile.JavaSourcesSubjectFactory.javaSources;
-import static dagger.internal.codegen.GeneratedLines.GENERATED_ANNOTATION;
 
 @RunWith(JUnit4.class)
 public class MapKeyProcessorTest {
@@ -147,8 +148,6 @@ public class MapKeyProcessorTest {
     JavaFileObject mapModuleTwoFile =JavaFileObjects.forSourceLines("test.MapModuleTwo",
         "package test;",
         "",
-        "import static dagger.Provides.Type.MAP;",
-        "",
         "import dagger.Module;",
         "import dagger.Provides;",
         "import dagger.multibindings.IntoMap;",
@@ -236,7 +235,7 @@ public class MapKeyProcessorTest {
             "  }",
             "",
             "  public static TestComponent create() {",
-            "    return builder().build();",
+            "    return new Builder().build();",
             "  }",
             "",
             "  @SuppressWarnings(\"unchecked\")",
@@ -411,7 +410,7 @@ public class MapKeyProcessorTest {
             "  }",
             "",
             "  public static TestComponent create() {",
-            "    return builder().build();",
+            "    return new Builder().build();",
             "  }",
             "",
             "  @SuppressWarnings(\"unchecked\")",

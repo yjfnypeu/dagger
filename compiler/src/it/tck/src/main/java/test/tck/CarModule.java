@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 Google, Inc.
+ * Copyright (C) 2015 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,17 +13,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package test.tck;
 
+import dagger.Binds;
 import dagger.Module;
-import dagger.Provides;
 import org.atinject.tck.auto.Car;
 import org.atinject.tck.auto.Convertible;
 
 @Module
-class CarModule {
-  @Provides
-  static Car provideConvertible(Convertible convertible) {
-    return convertible;
-  }
+abstract class CarModule {
+  @Binds
+  abstract Car provideConvertible(Convertible convertible);
 }

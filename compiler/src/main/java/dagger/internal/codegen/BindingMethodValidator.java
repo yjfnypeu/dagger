@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Google, Inc.
+ * Copyright (C) 2016 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,33 +13,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.internal.codegen;
 
-import com.google.common.base.Function;
-import com.google.common.base.Joiner;
-import com.google.common.cache.CacheBuilder;
-import com.google.common.cache.CacheLoader;
-import com.google.common.cache.LoadingCache;
-import com.google.common.collect.FluentIterable;
-import com.google.common.collect.ImmutableSet;
-import com.google.common.collect.Lists;
-import dagger.MapKey;
-import dagger.Provides;
-import dagger.multibindings.ElementsIntoSet;
-import dagger.multibindings.IntoMap;
-import dagger.producers.Produces;
-import java.lang.annotation.Annotation;
-import javax.annotation.OverridingMethodsMustInvokeSuper;
-import javax.annotation.processing.Messager;
-import javax.inject.Qualifier;
-import javax.lang.model.element.AnnotationMirror;
-import javax.lang.model.element.ExecutableElement;
-import javax.lang.model.type.TypeKind;
-import javax.lang.model.type.TypeMirror;
-import javax.lang.model.util.Elements;
-import javax.lang.model.util.Types;
-
-import static com.google.auto.common.MoreElements.getAnnotationMirror;
+import static dagger.internal.codegen.DaggerElements.getAnnotationMirror;
+import static dagger.internal.codegen.DaggerElements.isAnyAnnotationPresent;
 import static dagger.internal.codegen.ErrorMessages.BINDING_METHOD_ABSTRACT;
 import static dagger.internal.codegen.ErrorMessages.BINDING_METHOD_MULTIPLE_QUALIFIERS;
 import static dagger.internal.codegen.ErrorMessages.BINDING_METHOD_MUST_NOT_BIND_FRAMEWORK_TYPES;
@@ -55,13 +33,12 @@ import static dagger.internal.codegen.ErrorMessages.BINDING_METHOD_THROWS;
 import static dagger.internal.codegen.ErrorMessages.BINDING_METHOD_THROWS_ANY;
 import static dagger.internal.codegen.ErrorMessages.BINDING_METHOD_THROWS_CHECKED;
 import static dagger.internal.codegen.ErrorMessages.BINDING_METHOD_TYPE_PARAMETER;
-import static dagger.internal.codegen.ErrorMessages.BINDING_METHOD_WITH_MULTIPLE_MAP_KEY;
+import static dagger.internal.codegen.ErrorMessages.BINDING_METHOD_WITH_MULTIPLE_MAP_KEYS;
 import static dagger.internal.codegen.ErrorMessages.BINDING_METHOD_WITH_NO_MAP_KEY;
 import static dagger.internal.codegen.ErrorMessages.MULTIBINDING_ANNOTATION_CONFLICTS_WITH_BINDING_ANNOTATION_ENUM;
 import static dagger.internal.codegen.ErrorMessages.MULTIPLE_MULTIBINDING_ANNOTATIONS_ON_METHOD;
 import static dagger.internal.codegen.InjectionAnnotations.getQualifiers;
 import static dagger.internal.codegen.MapKeys.getMapKeys;
-import static dagger.internal.codegen.Util.isAnyAnnotationPresent;
 import static javax.lang.model.element.Modifier.ABSTRACT;
 import static javax.lang.model.element.Modifier.PRIVATE;
 import static javax.lang.model.type.TypeKind.ARRAY;
@@ -69,27 +46,38 @@ import static javax.lang.model.type.TypeKind.DECLARED;
 import static javax.lang.model.type.TypeKind.TYPEVAR;
 import static javax.lang.model.type.TypeKind.VOID;
 
+import com.google.common.base.Joiner;
+import com.google.common.collect.FluentIterable;
+import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Lists;
+import dagger.MapKey;
+import dagger.Provides;
+import dagger.multibindings.ElementsIntoSet;
+import dagger.multibindings.IntoMap;
+import dagger.producers.Produces;
+import java.lang.annotation.Annotation;
+import java.util.HashMap;
+import java.util.Map;
+import javax.annotation.OverridingMethodsMustInvokeSuper;
+import javax.inject.Qualifier;
+import javax.lang.model.element.AnnotationMirror;
+import javax.lang.model.element.ExecutableElement;
+import javax.lang.model.type.TypeKind;
+import javax.lang.model.type.TypeMirror;
+import javax.lang.model.util.Elements;
+import javax.lang.model.util.Types;
+
 /** A validator for methods that represent binding declarations. */
 abstract class BindingMethodValidator {
 
   private final Elements elements;
   private final Types types;
   private final Class<? extends Annotation> methodAnnotation;
-  private final ImmutableSet<Class<? extends Annotation>> enclosingElementAnnotations;
+  private final ImmutableSet<? extends Class<? extends Annotation>> enclosingElementAnnotations;
   private final Abstractness abstractness;
   private final ExceptionSuperclass exceptionSuperclass;
-  private final LoadingCache<ExecutableElement, ValidationReport<ExecutableElement>> cache =
-      CacheBuilder.newBuilder()
-          .build(
-              new CacheLoader<ExecutableElement, ValidationReport<ExecutableElement>>() {
-                @Override
-                public ValidationReport<ExecutableElement> load(ExecutableElement method) {
-                  ValidationReport.Builder<ExecutableElement> builder =
-                      ValidationReport.about(method);
-                  checkMethod(builder);
-                  return builder.build();
-                }
-              });
+  private final Map<ExecutableElement, ValidationReport<ExecutableElement>> cache = new HashMap<>();
+  private final AllowsMultibindings allowsMultibindings;
 
   /**
    * Creates a validator object.
@@ -104,14 +92,16 @@ abstract class BindingMethodValidator {
       Class<? extends Annotation> methodAnnotation,
       Class<? extends Annotation> enclosingElementAnnotation,
       Abstractness abstractness,
-      ExceptionSuperclass exceptionSuperclass) {
+      ExceptionSuperclass exceptionSuperclass,
+      AllowsMultibindings allowsMultibindings) {
     this(
         elements,
         types,
         methodAnnotation,
         ImmutableSet.of(enclosingElementAnnotation),
         abstractness,
-        exceptionSuperclass);
+        exceptionSuperclass,
+        allowsMultibindings);
   }
 
   /**
@@ -127,14 +117,15 @@ abstract class BindingMethodValidator {
       Class<? extends Annotation> methodAnnotation,
       Iterable<? extends Class<? extends Annotation>> enclosingElementAnnotations,
       Abstractness abstractness,
-      ExceptionSuperclass exceptionSuperclass) {
+      ExceptionSuperclass exceptionSuperclass,
+      AllowsMultibindings allowsMultibindings) {
     this.elements = elements;
     this.types = types;
     this.methodAnnotation = methodAnnotation;
-    this.enclosingElementAnnotations =
-        ImmutableSet.<Class<? extends Annotation>>copyOf(enclosingElementAnnotations);
+    this.enclosingElementAnnotations = ImmutableSet.copyOf(enclosingElementAnnotations);
     this.abstractness = abstractness;
     this.exceptionSuperclass = exceptionSuperclass;
+    this.allowsMultibindings = allowsMultibindings;
   }
   
   /** The annotation that identifies methods validated by this object. */
@@ -144,21 +135,13 @@ abstract class BindingMethodValidator {
 
   /** Returns a {@link ValidationReport} for {@code method}. */
   final ValidationReport<ExecutableElement> validate(ExecutableElement method) {
-    return cache.getUnchecked(method);
+    return cache.computeIfAbsent(method, this::validateUncached);
   }
 
-  /** Prints validation reports to {@code messager}, and returns valid methods. */
-  final ImmutableSet<ExecutableElement> validate(
-      Messager messager, Iterable<? extends ExecutableElement> methods) {
-    ImmutableSet.Builder<ExecutableElement> validMethods = ImmutableSet.builder();
-    for (ExecutableElement method : methods) {
-      ValidationReport<ExecutableElement> report = validate(method);
-      report.printMessagesTo(messager);
-      if (report.isClean()) {
-        validMethods.add(method);
-      }
-    }
-    return validMethods.build();
+  private ValidationReport<ExecutableElement> validateUncached(ExecutableElement m) {
+    ValidationReport.Builder<ExecutableElement> report = ValidationReport.about(m);
+    checkMethod(report);
+    return report.build();
   }
 
   /** Checks the method for validity. Adds errors to {@code builder}. */
@@ -187,13 +170,7 @@ abstract class BindingMethodValidator {
           formatErrorMessage(
               BINDING_METHOD_NOT_IN_MODULE,
               FluentIterable.from(enclosingElementAnnotations)
-                  .transform(
-                      new Function<Class<?>, String>() {
-                        @Override
-                        public String apply(Class<?> clazz) {
-                          return clazz.getSimpleName();
-                        }
-                      })
+                  .transform(Class::getSimpleName)
                   .join(Joiner.on(" or @"))));
     }
   }
@@ -337,6 +314,9 @@ abstract class BindingMethodValidator {
    * {@code MAP} has any.
    */
   protected void checkMapKeys(ValidationReport.Builder<ExecutableElement> builder) {
+    if (!allowsMultibindings.allowsMultibindings()) {
+      return;
+    }
     ImmutableSet<? extends AnnotationMirror> mapKeys = getMapKeys(builder.getSubject());
     if (ContributionType.fromBindingMethod(builder.getSubject()).equals(ContributionType.MAP)) {
       switch (mapKeys.size()) {
@@ -346,7 +326,7 @@ abstract class BindingMethodValidator {
         case 1:
           break;
         default:
-          builder.addError(formatErrorMessage(BINDING_METHOD_WITH_MULTIPLE_MAP_KEY));
+          builder.addError(formatErrorMessage(BINDING_METHOD_WITH_MULTIPLE_MAP_KEYS));
           break;
       }
     } else if (!mapKeys.isEmpty()) {
@@ -360,6 +340,9 @@ abstract class BindingMethodValidator {
    * annotation has a {@code type} parameter.
    */
   protected void checkMultibindings(ValidationReport.Builder<ExecutableElement> builder) {
+    if (!allowsMultibindings.allowsMultibindings()) {
+      return;
+    }
     ImmutableSet<AnnotationMirror> multibindingAnnotations =
         MultibindingAnnotations.forMethod(builder.getSubject());
     if (multibindingAnnotations.size() > 1) {
@@ -422,7 +405,7 @@ abstract class BindingMethodValidator {
    */
   protected enum ExceptionSuperclass {
     /** Methods may not declare any throwable types. */
-    NONE {
+    NO_EXCEPTIONS {
       @Override
       protected void checkThrows(
           BindingMethodValidator validator, ValidationReport.Builder<ExecutableElement> builder) {
@@ -456,7 +439,7 @@ abstract class BindingMethodValidator {
      * Adds an error if the method declares throws anything but an {@link Error} or an appropriate
      * subtype of {@link Exception}.
      *
-     * <p>This method is overridden in {@link #NONE}.
+     * <p>This method is overridden in {@link #NO_EXCEPTIONS}.
      */
     protected void checkThrows(
         BindingMethodValidator validator, ValidationReport.Builder<ExecutableElement> builder) {
@@ -471,6 +454,24 @@ abstract class BindingMethodValidator {
           break;
         }
       }
+    }
+  }
+
+  /** Whether to check multibinding annotations. */
+  protected enum AllowsMultibindings {
+    /**
+     * This method disallows multibinding annotations, so don't bother checking for their validity.
+     * {@link MultibindingAnnotationsProcessingStep} will add errors if the method has any
+     * multibinding annotations.
+     */
+    NO_MULTIBINDINGS,
+
+    /** This method allows multibinding annotations, so validate them. */
+    ALLOWS_MULTIBINDINGS,
+    ;
+
+    private boolean allowsMultibindings() {
+      return this == ALLOWS_MULTIBINDINGS;
     }
   }
 }

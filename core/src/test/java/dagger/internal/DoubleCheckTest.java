@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Google, Inc.
+ * Copyright (C) 2016 The Dagger Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dagger.internal;
+
+import static com.google.common.truth.Truth.assertThat;
+import static org.junit.Assert.fail;
 
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
@@ -32,10 +36,6 @@ import javax.inject.Provider;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
-
-import static com.google.common.truth.Truth.assertThat;
-import static com.google.common.truth.Truth.assert_;
-import static org.junit.Assert.fail;
 
 @RunWith(JUnit4.class)
 public class DoubleCheckTest {
@@ -58,13 +58,7 @@ public class DoubleCheckTest {
   }
 
   private static final Provider<Object> DOUBLE_CHECK_OBJECT_PROVIDER =
-      DoubleCheck.provider(
-          new Provider<Object>() {
-            @Override
-            public Object get() {
-              return new Object();
-            }
-          });
+      DoubleCheck.provider(Object::new);
 
   @Test
   public void doubleWrapping_provider() {
@@ -90,23 +84,20 @@ public class DoubleCheckTest {
     List<Callable<Object>> tasks = Lists.newArrayListWithCapacity(numThreads);
     for (int i = 0; i < numThreads; i++) {
       tasks.add(
-          new Callable<Object>() {
-            @Override
-            public Object call() throws Exception {
-              latch.countDown();
-              return lazy.get();
-            }
+          () -> {
+            latch.countDown();
+            return lazy.get();
           });
     }
 
     List<Future<Object>> futures = executor.invokeAll(tasks);
 
-    assert_().that(provider.provisions.get()).isEqualTo(1);
+    assertThat(provider.provisions.get()).isEqualTo(1);
     Set<Object> results = Sets.newIdentityHashSet();
     for (Future<Object> future : futures) {
       results.add(future.get());
     }
-    assert_().that(results.size()).isEqualTo(1);
+    assertThat(results).hasSize(1);
   }
 
   private static class LatchedProvider implements Provider<Object> {
@@ -130,13 +121,8 @@ public class DoubleCheckTest {
 
   @Test public void reentranceWithoutCondition_throwsStackOverflow() {
     final AtomicReference<Provider<Object>> doubleCheckReference =
-        new AtomicReference<Provider<Object>>();
-    Provider<Object> doubleCheck = DoubleCheck.provider(new Provider<Object>() {
-      @Override
-      public Object get() {
-        return doubleCheckReference.get().get();
-      }
-    });
+        new AtomicReference<>();
+    Provider<Object> doubleCheck = DoubleCheck.provider(() -> doubleCheckReference.get().get());
     doubleCheckReference.set(doubleCheck);
     try {
       doubleCheck.get();
@@ -146,39 +132,39 @@ public class DoubleCheckTest {
 
   @Test public void reentranceReturningSameInstance() {
     final AtomicReference<Provider<Object>> doubleCheckReference =
-        new AtomicReference<Provider<Object>>();
+        new AtomicReference<>();
     final AtomicInteger invocationCount = new AtomicInteger();
     final Object object = new Object();
-    Provider<Object> doubleCheck = DoubleCheck.provider(new Provider<Object>() {
-     @Override
-      public Object get() {
-         if (invocationCount.incrementAndGet() == 1) {
-          doubleCheckReference.get().get();
-        }
-        return object;
-      }
-    });
+    Provider<Object> doubleCheck = DoubleCheck.provider(() -> {
+        if (invocationCount.incrementAndGet() == 1) {
+         doubleCheckReference.get().get();
+       }
+       return object;
+     });
     doubleCheckReference.set(doubleCheck);
     assertThat(doubleCheck.get()).isSameAs(object);
   }
 
   @Test public void reentranceReturningDifferentInstances_throwsIllegalStateException() {
     final AtomicReference<Provider<Object>> doubleCheckReference =
-        new AtomicReference<Provider<Object>>();
+        new AtomicReference<>();
     final AtomicInteger invocationCount = new AtomicInteger();
-    Provider<Object> doubleCheck = DoubleCheck.provider(new Provider<Object>() {
-     @Override
-      public Object get() {
-        if (invocationCount.incrementAndGet() == 1) {
-          doubleCheckReference.get().get();
-        }
-        return new Object();
-      }
-    });
+    Provider<Object> doubleCheck = DoubleCheck.provider(() -> {
+       if (invocationCount.incrementAndGet() == 1) {
+         doubleCheckReference.get().get();
+       }
+       return new Object();
+     });
     doubleCheckReference.set(doubleCheck);
     try {
       doubleCheck.get();
       fail();
     } catch (IllegalStateException expected) {}
+  }
+
+  @Test
+  public void instanceFactoryAsLazyDoesNotWrap() {
+    Factory<Object> factory = InstanceFactory.create(new Object());
+    assertThat(DoubleCheck.lazy(factory)).isSameAs(factory);
   }
 }
